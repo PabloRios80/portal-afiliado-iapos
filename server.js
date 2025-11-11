@@ -128,33 +128,63 @@ app.get('/api/informe/:dni', async (req, res) => {
  * Función para construir la instrucción detallada para el modelo de IA.
  * @param {string} datosJson - El informe del afiliado en formato JSON.
  */
-function construirPrompt(datosJson) {
-    // ⚠️ ATENCIÓN: Esta lista guía a la IA. Puedes ajustarla con más campos de riesgo.
+function construirPrompt(datosPersona) {
+    // 1. Extraer datos clave para el encabezado del informe
+    const nombreProfesional = datosPersona["Profesional"] || "Desconocido";
+    const fechaInforme = datosPersona["FECHAX"] || "la fecha de tu último chequeo";
+
+    // 2. Convertir el objeto completo a JSON para que la IA lo analice
+    const datosJson = JSON.stringify(datosPersona, null, 2);
+
+    // ⚠️ CRÍTICO: Lista de campos de riesgo para guiar a la IA.
     const camposDeRiesgo = [
         "Dislipemias", "Diabetes", "Presión Arterial", "IMC",
         "Alimentación saludable", "Actividad física", "Tabaco",
-        "Estratificación riesgo CV"
+        "Estratificación riesgo CV", "Audición", "Agudeza visual"
     ];
 
+    // 3. Crear el encabezado dinámico
+    const encabezadoDinamico = `
+        ---
+        **ESTE ES UN INFORME PROFESIONAL**
+        
+        Este análisis fue realizado exclusivamente para usted por el Profesional **${nombreProfesional}**, médico preventivista del programa **Día Preventivo de IAPOS**, en base a los estudios, preguntas y resultados que surgen de su participación en este programa el día **${fechaInforme}**.
+        
+        ---
+    `;
+
+    // 4. Devolver la instrucción completa a Gemini
     return `
-        Eres un Asistente de Salud de IAPOS, tu tono debe ser amable, profesional, positivo y enfocado en la prevención.
+        Eres un Asistente de Salud de IAPOS, tu tono debe ser amable, profesional, positivo, empático y 100% enfocado en la **prevención**.
         
-        Tu tarea es generar un informe de devolución para el afiliado, basado en el informe de salud a continuación.
+        Tu tarea es generar un informe de devolución para el afiliado, basado en los datos de su último chequeo.
         
-        ### Instrucciones para el Informe:
-        1. **Identificación de Riesgos:** Analiza y busca resultados negativos en los campos: ${camposDeRiesgo.join(', ')}. Los valores como 'presenta', 'sí', 'alto', o una observación negativa indican riesgo.
-        2. **Estructura (Usa Markdown):**
-            * Título, Saludo y Mensaje Positivo Inicial.
-            * Sección **PUNTOS A ATENDER** (Si hay riesgos) o **PUNTOS DE FUERZA** (Si no hay riesgos).
-            * Proporciona 3-4 recomendaciones CLARAS y de prevención específicas para los riesgos identificados.
-        3. **Llamado a la Acción Estandarizado (Obligatorio al final):**
-            "**Tu salud es nuestra prioridad.** Te invitamos a utilizar nuestro servicio de Tele-orientación para discutir este informe con uno de nuestros profesionales de IAPOS. Podemos ayudarte a definir el camino de prevención más adecuado para ti. [Haga clic aquí para solicitar una conexión inmediata]."
-            
-        **INFORME DE SALUD A ANALIZAR:**
+        ### Instrucciones de Estilo y Formato:
+        1. **Usa Markdown:** Emplea negritas, listas y saltos de línea para que el texto sea aireado y fácil de leer.
+        2. **Usa Emojis:** Utiliza emojis para clasificar el estado de salud:
+            * **Riesgo/Negativo:** 🔴 (Círculo rojo), 🚨 (Alerta), 🛑 (Alto).
+            * **A Vigilar/Mejora:** 🟡 (Círculo amarillo), ⚠️ (Advertencia).
+            * **Positivo/Bien:** 🟢 (Círculo verde), ✅ (Check).
+        3. **Formato:** NO uses títulos de nivel 1 (#). Empieza directamente con el saludo.
+        
+        ### Estructura del Informe Requerido:
+        1. **Encabezado Específico:** Incluye el siguiente texto (mantén los saltos de línea y negritas para una buena presentación):
+            ${encabezadoDinamico}
+        
+        2. **Saludo y Resumen Positivo Inicial:** Reconoce los aspectos que están bien o son neutros.
+        3. **Sección de Atención y Prevención (Clave):**
+            * Identifica **CLARAMENTE** los riesgos o resultados a mejorar listados en los campos de riesgo (${camposDeRiesgo.join(', ')}).
+            * **Lista de Riesgos:** Usa un emoji rojo (🔴) o amarillo (🟡) para cada punto de riesgo.
+            * **Recomendaciones Específicas:** Proporciona 3-4 recomendaciones CLARAS y de prevención específicas para esos riesgos.
+        4. **Llamado a la Acción Estandarizado (Obligatorio al final):**
+            ---
+            **Próximo Paso: Conexión con Nuestros Profesionales**
+            Tu salud es nuestra prioridad. Te invitamos a utilizar nuestro servicio de Tele-orientación o a sacar un turno presencial para discutir este informe con un profesional médico de IAPOS. Ellos te guiarán para definir el camino de prevención más adecuado para ti.
+        
+        **INFORME DE SALUD A ANALIZAR (Datos Brutos):**
         ${datosJson}
     `;
 }
-
 // --- RUTA PARA EL ANÁLISIS DE IA ---
 app.post('/api/analizar-informe', async (req, res) => {
     
@@ -163,8 +193,10 @@ app.post('/api/analizar-informe', async (req, res) => {
     }
     
     const informeCompleto = req.body;
-    const datosParaAI = JSON.stringify(informeCompleto, null, 2);
-    const prompt = construirPrompt(datosParaAI);
+    // const datosParaAI = JSON.stringify(informeCompleto, null, 2); // -> ESTA LÍNEA DEBE ELIMINARSE/IGNORARSE
+    
+    // Pasamos el objeto completo a la función para que pueda extraer los datos clave
+    const prompt = construirPrompt(informeCompleto);
     
     console.log(`Enviando ${Object.keys(informeCompleto).length} campos a Gemini para su análisis...`);
 
@@ -184,7 +216,6 @@ app.post('/api/analizar-informe', async (req, res) => {
         res.status(500).json({ error: 'Fallo al generar el resumen personalizado con IA.' });
     }
 });
-
 // --- Iniciar el servidor ---
 async function startServer() {
     await loadTokens();

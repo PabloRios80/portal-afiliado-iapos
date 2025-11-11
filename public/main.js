@@ -118,61 +118,145 @@ async function obtenerResumenAI(persona) {
     }
 }
 
-
 /**
- * Función para formatear y mostrar los datos del afiliado en un pop-up.
+ * Función para formatear y mostrar los datos del afiliado y el resumen de IA en un pop-up.
  * @param {object} persona - El objeto que contiene todas las columnas de la hoja de cálculo.
  * @param {string} resumenAI - El resumen de salud generado por la IA.
  */
 function mostrarResultados(persona, resumenAI) {
-    // 🚀 CORRECCIÓN CLAVE: Usamos la clave correcta 'apellido y nombre'
     const nombre = persona['apellido y nombre'] || 'Afiliado'; 
     const dni = persona['DNI'] || 'N/A';
     
-    // Contenido inicial - Agregamos el resumen de IA al principio
-    let contenidoHTML = `
-        <div class="text-left p-4 border border-green-300 bg-green-50 rounded-lg mb-6">
-            ${resumenAI}
+    // --- 1. Definición de la sección de contacto ---
+    const TE = '3424 07-1702';
+    const EMAIL = 'diapreventivoiapos@diapreventivo.com';
+
+    const contactoHTML = `
+        <div class="bg-blue-100 p-4 rounded-lg text-center mt-6 border border-blue-300">
+            <h5 class="font-bold text-lg text-blue-800 mb-2">📞 Consulta con un Profesional</h5>
+            <p class="text-gray-700">Puedes solicitar un turno o tele-orientación para revisar tu informe:</p>
+            <p class="font-semibold mt-2">
+                <i class="fas fa-phone-alt mr-2 text-blue-600"></i> Teléfono: <a href="tel:${TE.replace(/\s/g, '')}" class="text-blue-600 hover:text-blue-800">${TE}</a>
+                <br>
+                <i class="fas fa-envelope mr-2 text-blue-600"></i> Correo: <a href="mailto:${EMAIL}" class="text-blue-600 hover:text-blue-800">${EMAIL}</a>
+            </p>
         </div>
-        
-        <h5 class="text-lg font-bold text-gray-700 mt-6 mb-3">Datos Brutos Encontrados</h5>
-        <p class="text-sm text-gray-500 mb-4">Para referencias de tu profesional, aquí está el detalle completo de tu ficha.</p>
-        
-        <table class="w-full text-left table-auto border-collapse border border-gray-300 rounded-lg overflow-hidden">
-            <tbody class="divide-y divide-gray-200">
     `;
 
-    // 🚀 Iteramos sobre TODOS los pares clave-valor de la persona.
+    // --- 2. Generación del contenido HTML completo ---
+    let contenidoHTML = `
+        <div id="informe-imprimible">
+            <div class="text-left p-4 border border-green-300 bg-green-50 rounded-lg mb-6 leading-relaxed">
+                ${resumenAI}
+            </div>
+
+            ${contactoHTML}
+
+            <h5 class="text-lg font-bold text-gray-700 mt-6 mb-3 border-b pb-2">📋 Ficha de Datos Brutos</h5>
+            <p class="text-sm text-gray-500 mb-4">Detalle completo para referencias médicas.</p>
+            
+            <table class="w-full text-left table-auto border-collapse border border-gray-300 rounded-lg overflow-hidden">
+                <tbody class="divide-y divide-gray-200">
+        `;
+
+    // Bucle de datos brutos
     for (const [key, value] of Object.entries(persona)) {
-        
-        // CORRECCIÓN DE TYPERROR: Convierte el valor a cadena y maneja null/undefined
         const safeValue = String(value || ''); 
-        
-        // Opcional: Ignorar campos vacíos
         if (safeValue.trim() === '') continue; 
 
         contenidoHTML += `
             <tr class="hover:bg-gray-100">
-                <th class="py-2 px-4 bg-gray-50 font-semibold text-gray-700 w-1/3">${key.toUpperCase()}:</th>
+                <th class="py-2 px-4 bg-gray-50 font-semibold text-gray-700 w-1/3">${key}:</th>
                 <td class="py-2 px-4 text-gray-800 font-medium">${safeValue}</td>
             </tr>
         `;
     }
 
     contenidoHTML += `
-            </tbody>
-        </table>
-    `;
+                </tbody>
+            </table>
+        </div> `;
 
-    // Mostrar la información final con SweetAlert2
+    // --- 3. Mostrar la información con SweetAlert2 y botones de acción ---
     Swal.fire({
         title: `¡Hola, ${nombre}! 👋 Tu Portal de Prevención`,
         html: contenidoHTML,
         icon: 'success',
+        // Usamos solo un botón de confirmación, y botones HTML personalizados
+        showConfirmButton: true,
         confirmButtonText: 'Cerrar',
+        
+        // Botones de acción personalizados
+        showCancelButton: true,
+        cancelButtonText: '<i class="fas fa-share-alt"></i> Compartir',
+        showDenyButton: true,
+        denyButtonText: '<i class="fas fa-print"></i> Imprimir/PDF',
+        
         customClass: {
             container: 'swal2-container',
-            popup: 'swal2-popup w-full md:w-3/4 lg:w-4/5', 
+            popup: 'swal2-popup w-full md:w-3/4 lg:w-4/5',
         },
+        
+        // 🚨 NUEVA LÓGICA: Usamos el parámetro didOpen para agregar un listener de clic
+        didOpen: () => {
+            const printButton = Swal.getDenyButton(); // Es el botón de Imprimir/PDF
+            const shareButton = Swal.getCancelButton(); // Es el botón de Compartir
+
+            // Listener para Imprimir/PDF
+            if (printButton) {
+                printButton.onclick = () => {
+                    const contenido = document.getElementById('informe-imprimible').innerHTML;
+                    imprimirContenido(contenido, nombre, dni);
+                };
+            }
+
+            // Listener para Compartir
+            if (shareButton) {
+                shareButton.onclick = () => {
+                    const shareText = `Revisa mi Informe de Día Preventivo IAPOS: ${window.location.href}`;
+                    navigator.clipboard.writeText(shareText);
+                    Swal.showValidationMessage('Link al Portal copiado al portapapeles.');
+                };
+            }
+        },
+        
+        // El resto de los parámetros de SweetAlert2 se mantiene por defecto
     });
+}
+
+// La función imprimirContenido debe estar fuera de mostrarResultados
+function imprimirContenido(htmlContent, nombre, dni) {
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Informe IAPOS: ${nombre} (${dni})</title>
+            <style>
+                /* Estilos básicos para impresión */
+                body { font-family: Arial, sans-serif; margin: 40px; }
+                h1 { color: #1e40af; border-bottom: 2px solid #1e40af; padding-bottom: 10px; margin-bottom: 20px; }
+                .resumen { background-color: #ecfdf5; border: 1px solid #059669; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+                .contacto { background-color: #bfdbfe; padding: 15px; border-radius: 5px; text-align: center; margin-top: 20px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f3f4f6; }
+                /* Ocultar elementos que no deben imprimirse, si los hubiera */
+                @media print {
+                   /* Ocultar cualquier botón o elemento de navegación */
+                }
+            </style>
+        </head>
+        <body>
+            <h1>Portal del Afiliado - IAPOS Día Preventivo</h1>
+            <div class="resumen">
+                <h3>Resumen de Salud Personalizado</h3>
+                ${htmlContent}
+            </div>
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print(); // Dispara la ventana de impresión/PDF
 }
