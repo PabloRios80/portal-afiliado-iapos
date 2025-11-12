@@ -3,10 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portal del Afiliado - IAPOS Día Preventivo</title>
+    <title>Portal Personal de Salud - IAPOS Día Preventivo</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="style.css">
+    <style>
+        .tab-btn {
+            border: none;
+            cursor: pointer;
+            outline: none;
+        }
+        .tab-btn.active {
+            border-bottom: 3px solid #3b82f6; /* Color azul de Tailwind 500 */
+        }
+    </style>
 </head>
 <body class="bg-gray-50">
 
@@ -21,40 +31,73 @@
 
     <main class="container mx-auto px-6 py-12 md:py-20 text-center">
         
-        <section class="mb-16">
-            <h2 class="text-4xl md:text-5xl font-extrabold text-blue-800 mb-4">Bienvenido al Portal del Afiliado</h2>
-            <p class="max-w-3xl mx-auto text-lg text-gray-600 leading-relaxed">
-                Este es el portal para afiliados de IAPOS que participan del programa DÍA PREVENTIVO, un programa para todos los afiliados de IAPOS de Santa Fe. Te invitamos a ser parte, es gratuito, es fácil y puede ser el inicio de una mejor calidad de vida y la oportunidad de evitar problemas graves de salud a futuro.
-            </p>
-        </section>
+        <div id="vista-inicial">
+            <section class="mb-16">
+                <h2 class="text-4xl md:text-5xl font-extrabold text-blue-800 mb-4">Bienvenido al Portal del Afiliado</h2>
+                <p class="max-w-3xl mx-auto text-lg text-gray-600 leading-relaxed">
+                    Este es el portal para afiliados de IAPOS que participan del programa DÍA PREVENTIVO, un programa para todos los afiliados de IAPOS de Santa Fe. Te invitamos a ser parte, es gratuito, es fácil y puede ser el inicio de una mejor calidad de vida y la oportunidad de evitar problemas graves de salud a futuro.
+                </p>
+            </section>
 
-        <section class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <section class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                
+                <div class="bg-white p-8 rounded-xl shadow-lg transform hover:scale-105 transition-transform duration-300">
+                    <i class="fas fa-book-open-reader text-5xl text-blue-500 mb-4"></i>
+                    <h3 class="text-2xl font-bold text-gray-800 mb-2">¿De qué se trata?</h3>
+                    <p class="text-gray-500 mb-6">Conoce los objetivos y beneficios del programa.</p>
+                    <a href="#" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-full transition-colors duration-300">Conocer el Día Preventivo</a>
+                </div>
+
+                <div class="bg-white p-8 rounded-xl shadow-lg transform hover:scale-105 transition-transform duration-300">
+                    <i class="fas fa-calendar-check text-5xl text-green-500 mb-4"></i>
+                    <h3 class="text-2xl font-bold text-gray-800 mb-2">¿Cómo hacer el Día Preventivo?</h3>
+                    <p class="text-gray-500 mb-6">Encuentra un prestador y agenda tu chequeo anual.</p>
+                    <a href="#" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-6 rounded-full transition-colors duration-300">Sacar un turno</a>
+                </div>
+                
+                <div class="bg-white p-8 rounded-xl shadow-lg transform hover:scale-105 transition-transform duration-300 border-t-4 border-purple-500">
+                    <i class="fas fa-id-card text-5xl text-purple-500 mb-4"></i>
+                    <h3 class="text-2xl font-bold text-gray-800 mb-2">Ya soy usuario</h3>
+                    <p class="text-gray-500 mb-6">Quiero conocer mis datos y recomendaciones personalizadas.</p>
+                    <button id="btn-ver-portal" class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-6 rounded-full transition-colors duration-300">Ver mi Portal Personal</button>
+                </div>
+
+            </section>
+        </div> <div id="portal-salud-container" class="text-left" style="display: none;">
             
-            <div class="bg-white p-8 rounded-xl shadow-lg transform hover:scale-105 transition-transform duration-300">
-                <i class="fas fa-book-open-reader text-5xl text-blue-500 mb-4"></i>
-                <h3 class="text-2xl font-bold text-gray-800 mb-2">¿De qué se trata?</h3>
-                <p class="text-gray-500 mb-6">Conoce los objetivos y beneficios del programa.</p>
-                <a href="#" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-full transition-colors duration-300">Conocer el Día Preventivo</a>
-            </div>
-
-            <div class="bg-white p-8 rounded-xl shadow-lg transform hover:scale-105 transition-transform duration-300">
-                <i class="fas fa-calendar-check text-5xl text-green-500 mb-4"></i>
-                <h3 class="text-2xl font-bold text-gray-800 mb-2">¿Cómo hacer el Día Preventivo?</h3>
-                <p class="text-gray-500 mb-6">Encuentra un prestador y agenda tu chequeo anual.</p>
-                <a href="#" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-6 rounded-full transition-colors duration-300">Sacar un turno</a>
-            </div>
+            <h1 class="text-4xl font-bold text-blue-800 mb-6 text-center">Portal Personal de Salud</h1>
             
-            <div class="bg-white p-8 rounded-xl shadow-lg transform hover:scale-105 transition-transform duration-300 border-t-4 border-purple-500">
-                <i class="fas fa-id-card text-5xl text-purple-500 mb-4"></i>
-                <h3 class="text-2xl font-bold text-gray-800 mb-2">Ya soy usuario</h3>
-                <p class="text-gray-500 mb-6">Quiero conocer mis datos y recomendaciones personalizadas.</p>
-                <button id="btn-ver-portal" class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-6 rounded-full transition-colors duration-300">Ver mi Portal Personal</button>
+            <div id="portal-navegacion" class="flex flex-wrap justify-center mb-8 border-b border-gray-200">
+                </div>
+
+            <div id="portal-contenido">
+                
+                <div id="tab-dia-preventivo" class="tab-pane">
+                    <h2 class="text-3xl font-semibold text-gray-700 border-b pb-2 mb-4">Mis Resultados del Día Preventivo</h2>
+                    <div id="dashboard-contenido">
+                        </div>
+                    <div id="dashboard-acciones" class="mt-8 p-4 bg-white rounded-lg shadow-lg text-center">
+                        </div>
+                </div>
+
+                <div id="tab-estudios" class="tab-pane" style="display: none;">
+                    <h2 class="text-3xl font-semibold text-gray-700 border-b pb-2 mb-4">Resultados Estudios Complementarios</h2>
+                    <div id="estudios-complementarios-lista" class="space-y-4">
+                        </div>
+                </div>
+
+                <div id="tab-servicios" class="tab-pane" style="display: none;">
+                    <h2 class="text-3xl font-semibold text-gray-700 border-b pb-2 mb-4">Otros Servicios y Consultas</h2>
+                    <p class="text-gray-600">Aquí se integrarán opciones de chat, consultas con especialistas, etc. (En desarrollo).</p>
+                </div>
             </div>
 
-        </section>
-    </main>
+        </div> </main>
+    <footer>
+        </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

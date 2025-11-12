@@ -1,262 +1,428 @@
+// ==============================================================================
+// 1. CONFIGURACIÓN INICIAL (DOMContentLoaded)
+// ==============================================================================
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Encontrar el botón para disparar la acción
     const btnVerPortal = document.getElementById('btn-ver-portal');
 
     if (btnVerPortal) {
         btnVerPortal.addEventListener('click', async () => {
-            // 2. Pedir el DNI al usuario usando SweetAlert2
+            // 1. Solicitar DNI (punto de futura seguridad)
             const { value: dni } = await Swal.fire({
-                title: 'Ingresá tu DNI',
+                title: 'Ingresa tu DNI',
                 input: 'text',
-                inputLabel: 'Número de Documento (sin puntos)',
+                inputLabel: 'Tu número de documento (sin puntos)',
                 inputPlaceholder: 'Ej: 12345678',
                 showCancelButton: true,
-                confirmButtonText: 'Buscar mis datos',
-                cancelButtonText: 'Cancelar',
-                // Validación mejorada
+                confirmButtonText: 'Ver mis resultados',
                 inputValidator: (value) => {
-                    if (!value) {
-                        return '¡Necesitas ingresar tu DNI!';
-                    }
-                    if (!/^\d{7,8}$/.test(value.trim())) { // Valida 7 u 8 dígitos numéricos
-                        return 'El DNI debe ser de 7 u 8 dígitos y solo contener números.';
+                    if (!value || isNaN(value)) {
+                        return 'Por favor, ingresa un DNI válido.';
                     }
                 }
             });
 
-            // Si el usuario ingresó un DNI y confirmó
-            if (dni) { // <-- ¡IMPORTANTE! Envuelve la lógica principal en el 'if (dni)'
-                const dniLimpio = dni.trim();
-
-                // 3. Mostrar un mensaje de carga (Loading) para la búsqueda de datos
+            if (dni) {
                 Swal.fire({
-                    title: 'Buscando información...',
-                    text: 'Conectando con la base de datos de IAPOS. Esto puede tardar unos segundos.',
+                    title: 'Buscando tu informe...',
                     allowOutsideClick: false,
-                    showConfirmButton: false,
                     didOpen: () => {
                         Swal.showLoading();
                     }
                 });
 
                 try {
-                    // 4. Llama al endpoint de tu servidor para buscar por DNI
-                    const dataResponse = await fetch(`/api/informe/${dniLimpio}`);
-                    const dataResult = await dataResponse.json();
+                    // 2. Buscar datos en el servidor
+                    const response = await fetch('/api/buscar-datos', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ dni: dni.trim() })
+                    });
 
-                    if (!dataResponse.ok) {
-                        throw new Error(dataResult.error || dataResult.message || 'Error desconocido al buscar el DNI.');
+                    const dataResult = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(dataResult.error || 'Error desconocido al buscar datos.');
                     }
 
-                    // 5. Datos encontrados con éxito. Iniciar análisis de IA.
+                    if (!dataResult.persona) {
+                        Swal.fire('No Encontrado', 'No se encontraron resultados para el DNI ingresado.', 'error');
+                        return;
+                    }
+
+                    // 3. Datos encontrados con éxito. Iniciar análisis de IA.
                     // Llamar a la IA para obtener el resumen
                     const resumenAI = await obtenerResumenAI(dataResult.persona); 
 
-                    // 6. Mostrar ambos, datos brutos y resumen de IA
-                    mostrarResultados(dataResult.persona, resumenAI);
+                    // 4. Cargar el Portal Personal de Salud (Nueva Vista)
+                    cargarPortalPersonal(dataResult.persona, resumenAI);
+                    
+                    Swal.close(); // Cerrar el loading
 
                 } catch (error) {
-                    // Manejo de errores 404, 500, etc.
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Error en la búsqueda',
-                        html: `No pudimos obtener tus datos.<br>
-                                <strong>${error.message.includes('No se encontraron') ? 'No se encontraron datos para el DNI ingresado.' : 'Hubo un problema de conexión con el servidor. Intenta de nuevo.'}</strong>
-                                <br><br>
-                                Si el problema persiste, contacta a soporte.`,
-                        confirmButtonText: 'Entendido'
-                    });
-                    console.error('Error al obtener datos del afiliado:', error);
+                    console.error('Error en el proceso de búsqueda:', error);
+                    Swal.fire('Error del Sistema', 'Hubo un problema al buscar o analizar tu informe. Intenta más tarde.', 'error');
                 }
-            } // Cierre del if (dni)
-        });
-    }
-}); // <-- CIERRE CORRECTO del document.addEventListener
-
-
-// =================================================================
-// === FUNCIONES AUXILIARES (DEBEN IR FUERA DEL DOMContentLoaded) ===
-// =================================================================
-
-
-/**
- * Función para llamar al endpoint del servidor y obtener el resumen de IA.
- * @param {object} persona - El objeto con los datos del afiliado.
- */
-async function obtenerResumenAI(persona) {
-    try {
-        // Mostrar Loading de la IA
-        Swal.fire({
-            title: 'Analizando tus datos de salud...',
-            text: 'Generando tu informe personalizado de prevención. ¡Ya casi está!',
-            allowOutsideClick: false,
-            showConfirmButton: false,
-            didOpen: () => {
-                Swal.showLoading();
             }
         });
-        
-        const response = await fetch('/api/analizar-informe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(persona) // Enviamos el objeto completo de la persona
-        });
-        
-        const result = await response.json();
-        Swal.close(); // Cerrar loading de la IA
-
-        if (!response.ok) {
-            throw new Error(result.error || 'Fallo al generar el resumen.');
-        }
-
-        return result.resumen; // Devuelve el texto generado por la IA
-        
-    } catch (error) {
-        console.error('Error en la llamada a la IA:', error);
-        // Devolvemos un mensaje de error como resumen si la IA falla
-        return "⚠️ **Lo sentimos, hubo un error al generar el análisis personalizado de IA.** Por favor, intenta nuevamente más tarde.";
     }
+});
+
+// ==============================================================================
+// 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO
+// ==============================================================================
+
+/**
+ * Llama al servidor para obtener el resumen de IA.
+ */
+async function obtenerResumenAI(persona) {
+    const response = await fetch('/api/analizar-informe', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(persona)
+    });
+
+    if (!response.ok) {
+        throw new Error('Fallo al obtener el resumen de IA.');
+    }
+
+    const data = await response.json();
+    return data.resumen;
+}
+// ... (resto del código anterior)
+
+/**
+ * Mapea un valor de columna a un nivel de riesgo (color/ícono).
+ * Criterios actualizados por el cliente.
+ */
+function getRiskLevel(key, value) {
+    const v = String(value || '').toLowerCase().trim();
+    const k = key.toLowerCase().trim();
+
+    // 0. Regla de NEUTRO (Gris) - Máxima Prioridad para variables informativas
+    if (['edad', 'sexo', 'profesional', 'fechax', 'dni'].includes(k)) {
+        return { color: 'gray', icon: 'info', text: 'Informativo' };
+    }
+    
+    // 1. Reglas de CALMA (Verde) - Ausencia de Riesgo (Prioridad Alta)
+    if (v.includes('no presenta') || 
+        v.includes('normal') || 
+        v.includes('adecuada') || 
+        v.includes('no abusa') || // Abuso Alcohol
+        v.includes('no se verifica') || // Violencia, Depresión, etc.
+        v.includes('no fuma') || 
+        v.includes('cumple') || // Seguridad Vial
+        v.includes('no indicado') || // Ácido Fólico
+        v.includes('no aplica') || // No Aplica
+        v.includes('bajo') || 
+        v.includes('realiza') || 
+        v.includes('riesgo bajo') || 
+        v.includes('negativo')) {
+        return { color: 'green', icon: 'check', text: 'Calma' };
+    }
+    
+    // 2. Reglas universales de ALERTA (Rojo)
+    // Se ejecuta si NO pasó la regla Verde, buscando presencia de riesgo.
+    if (v.includes('sí presenta') || 
+        v.includes('presenta') || 
+        v.includes('elevado') || 
+        v.includes('anormal') || 
+        v.includes('alto') || 
+        v.includes('sí') || 
+        v.includes('no control') || 
+        v.includes('No realiza') || 
+        v.includes('pendiente') || 
+        v.includes('riesgo alto') || 
+        v.includes('positivo') ||
+        v.includes('incompleto') || // Inmunizaciones
+        v.includes('obesidad') || // IMC
+        v.includes('hipertensión') || // Presión Arterial
+        v.includes('hipertension') // Presión Arterial (sin acento)
+        ) {
+        return { color: 'red', icon: 'times', text: 'Alerta' };
+    }
+    
+    // 3. Reglas específicas o de ATENCIÓN (Amarillo)
+    if (k.includes('imc') && (v.includes('sobrepeso') || v.includes('bajo peso'))) {
+        return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
+    }
+    if (v.includes('mejorar') || 
+        v.includes('moderar') || 
+        v.includes('a vigilar') || 
+        v.includes('límite') || 
+        v.includes('riesgo moderado')) {
+        return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
+    }
+
+    // Si el valor no es claro pero existe, por defecto es atención.
+    if (v.length > 0) {
+        return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
+    }
+    
+    // Si el valor está vacío o no mapeado
+    return { color: 'gray', icon: 'question', text: 'Sin Dato' };
+}
+// ==============================================================================
+// 3. FUNCIONES DEL PORTAL PERSONAL DE SALUD (Dashboard y Pestañas)
+// ==============================================================================
+
+/**
+ * Carga el Portal Personal de Salud y configura la navegación.
+ */
+function cargarPortalPersonal(persona, resumenAI) {
+    // 1. Ocultar la vista inicial y mostrar el portal
+    document.getElementById('vista-inicial').style.display = 'none';
+    document.getElementById('portal-salud-container').style.display = 'block';
+
+    // 2. Cargar el contenido de las pestañas
+    cargarDiaPreventivoTab(persona, resumenAI);
+    cargarEstudiosTab(); // Carga la lista estática de estudios
+    // cargarOtrosServiciosTab(); // Función pendiente
+
+    // 3. Construir la navegación (Botones)
+    const navContenedor = document.getElementById('portal-navegacion');
+    navContenedor.innerHTML = `
+        <button id="btn-tab-dia-preventivo" class="tab-btn active bg-blue-600 text-white font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
+            <i class="fas fa-heartbeat mr-2"></i> Día Preventivo
+        </button>
+        <button id="btn-tab-estudios" class="tab-btn text-gray-700 hover:bg-gray-100 font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
+            <i class="fas fa-x-ray mr-2"></i> Estudios Complementarios
+        </button>
+        <button id="btn-tab-servicios" class="tab-btn text-gray-700 hover:bg-gray-100 font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
+            <i class="fas fa-headset mr-2"></i> Otros Servicios
+        </button>
+    `;
+
+    // 4. Configurar Listeners y Mostrar la primera pestaña
+    document.querySelectorAll('.tab-btn').forEach(button => {
+        button.addEventListener('click', () => {
+            const targetId = button.id.replace('btn-tab-', 'tab-');
+            mostrarPestana(targetId);
+        });
+    });
+
+    mostrarPestana('tab-dia-preventivo'); // Mostrar la pestaña principal por defecto
+    window.scrollTo(0, 0);
 }
 
 /**
- * Función para formatear y mostrar los datos del afiliado y el resumen de IA en un pop-up.
- * @param {object} persona - El objeto que contiene todas las columnas de la hoja de cálculo.
- * @param {string} resumenAI - El resumen de salud generado por la IA.
+ * Función para manejar el cambio entre pestañas.
  */
-function mostrarResultados(persona, resumenAI) {
-    const nombre = persona['apellido y nombre'] || 'Afiliado'; 
-    const dni = persona['DNI'] || 'N/A';
-    
-    // --- 1. Definición de la sección de contacto ---
-    const TE = '3424 07-1702';
-    const EMAIL = 'diapreventivoiapos@diapreventivo.com';
+function mostrarPestana(tabId) {
+    // Ocultar todas las pestañas
+    document.querySelectorAll('.tab-pane').forEach(tab => {
+        tab.style.display = 'none';
+    });
 
-    const contactoHTML = `
-        <div class="bg-blue-100 p-4 rounded-lg text-center mt-6 border border-blue-300">
-            <h5 class="font-bold text-lg text-blue-800 mb-2">📞 Consulta con un Profesional</h5>
-            <p class="text-gray-700">Puedes solicitar un turno o tele-orientación para revisar tu informe:</p>
-            <p class="font-semibold mt-2">
-                <i class="fas fa-phone-alt mr-2 text-blue-600"></i> Teléfono: <a href="tel:${TE.replace(/\s/g, '')}" class="text-blue-600 hover:text-blue-800">${TE}</a>
-                <br>
-                <i class="fas fa-envelope mr-2 text-blue-600"></i> Correo: <a href="mailto:${EMAIL}" class="text-blue-600 hover:text-blue-800">${EMAIL}</a>
-            </p>
-        </div>
+    // Desactivar todos los botones
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active', 'bg-blue-600', 'text-white', 'border-blue-500');
+        btn.classList.add('text-gray-700', 'hover:bg-gray-100');
+    });
+
+    // Mostrar la pestaña seleccionada
+    document.getElementById(tabId).style.display = 'block';
+
+    // Activar el botón correspondiente
+    const activeBtn = document.getElementById('btn-' + tabId);
+    if (activeBtn) {
+        activeBtn.classList.add('active', 'bg-blue-600', 'text-white');
+        activeBtn.classList.remove('text-gray-700', 'hover:bg-gray-100');
+    }
+}
+
+// ==============================================================================
+// 4. CONTENIDO DE LAS PESTAÑAS
+// ==============================================================================
+
+/**
+ * Genera el contenido para la pestaña Día Preventivo (Dashboard Visual + Botones de IA).
+ */
+function cargarDiaPreventivoTab(persona, resumenAI) {
+    const nombre = persona['apellido y nombre'] || 'Afiliado';
+    const dni = persona['DNI'] || 'N/A';
+    const dashboardContenedor = document.getElementById('dashboard-contenido');
+    const accionesContenedor = document.getElementById('dashboard-acciones');
+
+    // 1. Construir el HTML del dashboard (Resultado a Resultado)
+    let dashboardHTML = `
+        <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     `;
 
-    // --- 2. Generación del contenido HTML completo ---
-    let contenidoHTML = `
-        <div id="informe-imprimible">
-            <div class="text-left p-4 border border-green-300 bg-green-50 rounded-lg mb-6 leading-relaxed">
-                ${resumenAI}
-            </div>
-
-            ${contactoHTML}
-
-            <h5 class="text-lg font-bold text-gray-700 mt-6 mb-3 border-b pb-2">📋 Ficha de Datos Brutos</h5>
-            <p class="text-sm text-gray-500 mb-4">Detalle completo para referencias médicas.</p>
-            
-            <table class="w-full text-left table-auto border-collapse border border-gray-300 rounded-lg overflow-hidden">
-                <tbody class="divide-y divide-gray-200">
-        `;
-
-    // Bucle de datos brutos
+    // 1.1. Bucle para generar las tarjetas de riesgo
     for (const [key, value] of Object.entries(persona)) {
+        // Ignorar campos de identificación/log
+        if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional'].includes(key)) {
+            continue; 
+        }
+        
         const safeValue = String(value || ''); 
-        if (safeValue.trim() === '') continue; 
+        if (safeValue.trim() === '') continue; // Ignorar campos vacíos
 
-        contenidoHTML += `
-            <tr class="hover:bg-gray-100">
-                <th class="py-2 px-4 bg-gray-50 font-semibold text-gray-700 w-1/3">${key}:</th>
-                <td class="py-2 px-4 text-gray-800 font-medium">${safeValue}</td>
-            </tr>
+        const risk = getRiskLevel(key, safeValue);
+        
+        // Mapeo de colores Tailwind CSS
+        const colorMap = {
+            red: 'bg-red-100 border-red-500 text-red-700',
+            yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700',
+            green: 'bg-green-100 border-green-500 text-green-700',
+            gray: 'bg-gray-100 border-gray-400 text-gray-600',
+        };
+        const iconMap = {
+            times: 'fas fa-times-circle',
+            exclamation: 'fas fa-exclamation-triangle',
+            check: 'fas fa-check-circle',
+            question: 'fas fa-question-circle',
+        };
+
+        dashboardHTML += `
+            <div class="p-4 border-l-4 ${colorMap[risk.color]} rounded-md shadow-sm transition hover:shadow-lg">
+                <div class="flex items-center justify-between mb-1">
+                    <h3 class="font-bold text-md">${key.toUpperCase()}</h3>
+                    <span class="font-semibold text-sm px-2 py-0.5 rounded-full bg-${risk.color}-500 text-white">${risk.text}</span>
+                </div>
+                <p class="text-sm italic mb-2">Resultado: ${safeValue}</p>
+                <div class="text-xs flex items-center mt-2">
+                    <i class="${iconMap[risk.icon]} mr-2"></i>
+                    ${key.includes('Observaciones') ? safeValue : (risk.text === 'Calma' ? 'Buen estado. ¡A mantener!' : 'Revisar en el informe profesional.')}
+                </div>
+            </div>
         `;
     }
 
-    contenidoHTML += `
-                </tbody>
-            </table>
-        </div> `;
+    dashboardHTML += `
+            </div> </div> `;
 
-    // --- 3. Mostrar la información con SweetAlert2 y botones de acción ---
+    // 2. Inyectar el HTML del Dashboard
+    dashboardContenedor.innerHTML = dashboardHTML;
+
+    // 3. Construir e inyectar los botones de acción
+    // Nota: Usamos replace(/'/g, "\\'") para escapar comillas simples dentro de la cadena que pasa a la función
+    accionesContenedor.innerHTML = `
+        <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mr-4">
+            <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
+        </button>
+        <button onclick="descargarPDF('${nombre}', '${dni}')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mr-4">
+            <i class="fas fa-file-pdf mr-2"></i> Descargar PDF
+        </button>
+        <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300">
+            <i class="fas fa-share-alt mr-2"></i> Compartir Portal
+        </button>
+    `;
+}
+
+/**
+ * Genera el contenido estático de la pestaña Estudios Complementarios.
+ */
+function cargarEstudiosTab() {
+    const contenedor = document.getElementById('estudios-complementarios-lista');
+
+    const estudios = [
+        { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', link: '#' },
+        { nombre: 'Mamografía', icon: 'fas fa-x-ray', link: '#' },
+        { nombre: 'Ecografía', icon: 'fas fa-ultrasound', link: '#' },
+        { nombre: 'Espirometría', icon: 'fas fa-lungs', link: '#' },
+        { nombre: 'Enfermería', icon: 'fas fa-user-nurse', link: '#' },
+        { nombre: 'Densitometría', icon: 'fas fa-bone', link: '#' },
+        { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', link: '#' },
+        { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', link: '#' },
+    ];
+
+    let html = '';
+    estudios.forEach(estudio => {
+        html += `
+            <a href="${estudio.link}" target="_blank" class="flex items-center p-4 bg-white rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 border-purple-500">
+                <i class="${estudio.icon} text-purple-600 text-2xl mr-4"></i>
+                <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
+                <i class="fas fa-chevron-right ml-auto text-gray-400"></i>
+            </a>
+        `;
+    });
+
+    contenedor.innerHTML = html;
+}
+
+// ==============================================================================
+// 5. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
+// ==============================================================================
+
+/**
+ * Función que abre el informe escrito AI en un modal, separada para limpieza.
+ */
+function mostrarInformeEscrito(nombre, resumenAI) {
     Swal.fire({
-        title: `¡Hola, ${nombre}! 👋 Tu Portal de Prevención`,
-        html: contenidoHTML,
-        icon: 'success',
-        // Usamos solo un botón de confirmación, y botones HTML personalizados
-        showConfirmButton: true,
+        title: `Informe Escrito AI de ${nombre}`,
+        // El contenido usa el backtick para manejar saltos de línea y Markdown
+        html: `<div class="text-left p-4 leading-relaxed">${resumenAI}</div>`, 
+        icon: 'info',
         confirmButtonText: 'Cerrar',
-        
-        // Botones de acción personalizados
-        showCancelButton: true,
-        cancelButtonText: '<i class="fas fa-share-alt"></i> Compartir',
-        showDenyButton: true,
-        denyButtonText: '<i class="fas fa-print"></i> Imprimir/PDF',
-        
         customClass: {
-            container: 'swal2-container',
             popup: 'swal2-popup w-full md:w-3/4 lg:w-4/5',
         },
-        
-        // 🚨 NUEVA LÓGICA: Usamos el parámetro didOpen para agregar un listener de clic
-        didOpen: () => {
-            const printButton = Swal.getDenyButton(); // Es el botón de Imprimir/PDF
-            const shareButton = Swal.getCancelButton(); // Es el botón de Compartir
-
-            // Listener para Imprimir/PDF
-            if (printButton) {
-                printButton.onclick = () => {
-                    const contenido = document.getElementById('informe-imprimible').innerHTML;
-                    imprimirContenido(contenido, nombre, dni);
-                };
-            }
-
-            // Listener para Compartir
-            if (shareButton) {
-                shareButton.onclick = () => {
-                    const shareText = `Revisa mi Informe de Día Preventivo IAPOS: ${window.location.href}`;
-                    navigator.clipboard.writeText(shareText);
-                    Swal.showValidationMessage('Link al Portal copiado al portapapeles.');
-                };
-            }
-        },
-        
-        // El resto de los parámetros de SweetAlert2 se mantiene por defecto
+        // Opcional: Agregar un botón para imprimir el modal
+        showDenyButton: true,
+        denyButtonText: '<i class="fas fa-print"></i> Imprimir',
+        preDeny: () => {
+             // Lógica para imprimir solo el modal (usando impresión nativa)
+            window.print();
+             return false; // Evita que se cierre el modal
+        }
     });
 }
 
-// La función imprimirContenido debe estar fuera de mostrarResultados
-function imprimirContenido(htmlContent, nombre, dni) {
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Informe IAPOS: ${nombre} (${dni})</title>
-            <style>
-                /* Estilos básicos para impresión */
-                body { font-family: Arial, sans-serif; margin: 40px; }
-                h1 { color: #1e40af; border-bottom: 2px solid #1e40af; padding-bottom: 10px; margin-bottom: 20px; }
-                .resumen { background-color: #ecfdf5; border: 1px solid #059669; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-                .contacto { background-color: #bfdbfe; padding: 15px; border-radius: 5px; text-align: center; margin-top: 20px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f3f4f6; }
-                /* Ocultar elementos que no deben imprimirse, si los hubiera */
-                @media print {
-                   /* Ocultar cualquier botón o elemento de navegación */
-                }
-            </style>
-        </head>
-        <body>
-            <h1>Portal del Afiliado - IAPOS Día Preventivo</h1>
-            <div class="resumen">
-                <h3>Resumen de Salud Personalizado</h3>
-                ${htmlContent}
-            </div>
-        </body>
-        </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print(); // Dispara la ventana de impresión/PDF
+/**
+ * Usa html2pdf.js para convertir el HTML en un archivo PDF descargable.
+ */
+function descargarPDF(nombre, dni) {
+    const element = document.getElementById('informe-imprimible');
+
+    Swal.fire({
+        title: 'Generando PDF...',
+        text: 'Por favor, espera un momento mientras se crea el documento.',
+        allowOutsideClick: false,
+        showConfirmButton: false,
+        didOpen: () => {
+            Swal.showLoading();
+        }
+    });
+
+    const options = {
+        margin: [10, 10, 10, 10], // Margen en mm
+        filename: `Informe_IAPOS_${dni}_${nombre.replace(/\s/g, '_')}.pdf`, // Nombre del archivo
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    // La función html2pdf.js para generar el PDF
+    html2pdf().set(options).from(element).save().then(() => {
+        Swal.close(); // Cierra el loading de SweetAlert2
+    }).catch(error => {
+        console.error('Error al crear el PDF:', error);
+        Swal.fire('Error', 'No se pudo generar el PDF. Intenta nuevamente.', 'error');
+    });
+}
+
+/**
+ * Función auxiliar para compartir el enlace del portal.
+ */
+function compartirDashboard() {
+    const shareText = `¡He revisado mi informe de prevención en IAPOS! Revisa tu portal aquí: ${window.location.href}`;
+    // Usar document.execCommand('copy') como fallback seguro para entornos iframe
+    try {
+        const tempTextArea = document.createElement('textarea');
+        tempTextArea.value = shareText;
+        document.body.appendChild(tempTextArea);
+        tempTextArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempTextArea);
+        Swal.fire('¡Copiado!', 'El enlace al portal ha sido copiado al portapapeles.', 'success');
+    } catch (err) {
+        console.error('Fallo al copiar:', err);
+        Swal.fire('Error', 'No se pudo copiar el enlace automáticamente. Por favor, cópialo manualmente.', 'error');
+    }
 }

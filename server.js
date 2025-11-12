@@ -8,23 +8,25 @@ const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json());
-const PORT = process.env.PORT || 3001; // Usamos un puerto diferente para no chocar con el otro proyecto
+const PORT = process.env.PORT || 3001;
 
-// --- CONFIGURACIÓN DE AUTENTICACIÓN (IDÉNTICA A TU OTRA APP) ---
+// --- CONFIGURACIÓN DE AUTENTICACIÓN ---
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const REDIRECT_URI = 'http://localhost:3001/oauth2callback'; // Ojo al puerto 3001
+const REDIRECT_URI = 'http://localhost:3001/oauth2callback';
 
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
 const TOKEN_PATH = path.join(__dirname, 'token.json');
+
+// Servir archivos estáticos (index.html, main.js, etc.)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 🚀 INICIALIZACIÓN DE GEMINI (Después de cargar dotenv)
-const ai = new GoogleGenAI({}); // Lee la clave del .env automáticamente
+// 🚀 INICIALIZACIÓN DE GEMINI
+const ai = new GoogleGenAI({}); 
 
-// --- FUNCIONES PARA MANEJAR EL TOKEN (IDÉNTICAS A TU OTRA APP) ---
+// --- FUNCIONES PARA MANEJAR EL TOKEN ---
 async function loadTokens() {
     try {
         const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf-8'));
@@ -42,15 +44,7 @@ function saveTokens(tokens) {
     console.log('Tokens guardados en token.json.');
 }
 
-async function getAuthenticatedClient() {
-    const areTokensLoaded = await loadTokens();
-    if (!areTokensLoaded) {
-        throw new Error('Tokens no cargados. Por favor, autentícate primero en /auth.');
-    }
-    return oauth2Client;
-}
-
-// --- RUTAS DE AUTENTICACIÓN (IDÉNTICAS A TU OTRA APP) ---
+// --- RUTAS DE AUTENTICACIÓN ---
 app.get('/auth', (req, res) => {
     const authUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
@@ -71,16 +65,15 @@ app.get('/oauth2callback', async (req, res) => {
         res.status(500).send('Error de autenticación.');
     }
 });
-// --- RUTA PRINCIPAL OPTIMIZADA CON GOOGLE QUERY API ---
-app.get('/api/informe/:dni', async (req, res) => {
+
+// ----------------------------------------------------------------------
+// RUTA DE BÚSQUEDA DEL DNI
+// ----------------------------------------------------------------------
+app.post('/api/buscar-datos', async (req, res) => {
     try {
-        // La autenticación (loadTokens) es solo para el API de Google Sheets oficial,
-        // la API de Query (gviz/tq) funciona si la hoja está compartida como "Lector".
-        
-        const dniBuscado = req.params.dni.trim();
+        const dniBuscado = req.body.dni.trim();
         const sheetName = 'Integrado'; 
         
-        // 🚀 AJUSTE CLAVE: La consulta ahora busca en la columna 'C'.
         // La consulta trae TODAS las columnas (select *), donde la columna C es igual al DNI.
         const query = encodeURIComponent(`select * where C = '${dniBuscado}' limit 1`);
         
@@ -88,11 +81,8 @@ app.get('/api/informe/:dni', async (req, res) => {
 
         console.log(`Consultando API de Query para DNI: ${dniBuscado} (Columna C)...`);
 
-        // Hacemos la petición HTTP para obtener SOLO la fila que necesitamos
         const response = await axios.get(queryUrl);
 
-        // La respuesta es un string que incluye JSON con metadatos. Hay que parsearlo.
-        // Esta expresión regular extrae el JSON limpio del cuerpo de la respuesta.
         const dataText = response.data.replace(/.*google.visualization.Query.setResponse\((.*)\);/s, '$1');
         const dataJson = JSON.parse(dataText);
 
@@ -104,9 +94,8 @@ app.get('/api/informe/:dni', async (req, res) => {
         const rows = dataJson.table.rows;
         const cols = dataJson.table.cols;
 
-        // Mapeamos los datos usando los encabezados
         const headers = cols.map(col => col.label || col.id);
-        const personaData = rows[0].c; // 'c' contiene los datos de la fila
+        const personaData = rows[0].c; 
 
         const persona = {};
         headers.forEach((header, index) => {
@@ -118,7 +107,6 @@ app.get('/api/informe/:dni', async (req, res) => {
         res.json({ persona });
 
     } catch (error) {
-        // Error de Axios, conexión o de la API de Query
         console.error('Error al buscar el DNI con Google Query:', error.message);
         res.status(500).json({ error: 'Error interno del servidor al consultar la hoja.' });
     }
@@ -126,24 +114,20 @@ app.get('/api/informe/:dni', async (req, res) => {
 
 /**
  * Función para construir la instrucción detallada para el modelo de IA.
- * @param {string} datosJson - El informe del afiliado en formato JSON.
+ * @param {object} datosPersona - El informe del afiliado como objeto.
  */
 function construirPrompt(datosPersona) {
-    // 1. Extraer datos clave para el encabezado del informe
     const nombreProfesional = datosPersona["Profesional"] || "Desconocido";
     const fechaInforme = datosPersona["FECHAX"] || "la fecha de tu último chequeo";
 
-    // 2. Convertir el objeto completo a JSON para que la IA lo analice
     const datosJson = JSON.stringify(datosPersona, null, 2);
 
-    // ⚠️ CRÍTICO: Lista de campos de riesgo para guiar a la IA.
     const camposDeRiesgo = [
         "Dislipemias", "Diabetes", "Presión Arterial", "IMC",
         "Alimentación saludable", "Actividad física", "Tabaco",
         "Estratificación riesgo CV", "Audición", "Agudeza visual"
     ];
 
-    // 3. Crear el encabezado dinámico
     const encabezadoDinamico = `
         ---
         **ESTE ES UN INFORME PROFESIONAL**
@@ -153,7 +137,6 @@ function construirPrompt(datosPersona) {
         ---
     `;
 
-    // 4. Devolver la instrucción completa a Gemini
     return `
         Eres un Asistente de Salud de IAPOS, tu tono debe ser amable, profesional, positivo, empático y 100% enfocado en la **prevención**.
         
@@ -185,6 +168,7 @@ function construirPrompt(datosPersona) {
         ${datosJson}
     `;
 }
+
 // --- RUTA PARA EL ANÁLISIS DE IA ---
 app.post('/api/analizar-informe', async (req, res) => {
     
@@ -193,9 +177,7 @@ app.post('/api/analizar-informe', async (req, res) => {
     }
     
     const informeCompleto = req.body;
-    // const datosParaAI = JSON.stringify(informeCompleto, null, 2); // -> ESTA LÍNEA DEBE ELIMINARSE/IGNORARSE
     
-    // Pasamos el objeto completo a la función para que pueda extraer los datos clave
     const prompt = construirPrompt(informeCompleto);
     
     console.log(`Enviando ${Object.keys(informeCompleto).length} campos a Gemini para su análisis...`);
@@ -212,16 +194,18 @@ app.post('/api/analizar-informe', async (req, res) => {
         res.json({ resumen: resumenAI });
 
     } catch (error) {
-        console.error('Error al llamar a la IA:', error);
-        res.status(500).json({ error: 'Fallo al generar el resumen personalizado con IA.' });
+        // 🚨 CAMBIO CLAVE: REGISTRO DETALLADO DEL ERROR
+        console.error('🚨 ERROR CRÍTICO DE GEMINI:', error.message);
+        console.error('STACK TRACE:', error.stack);
+        // El cliente recibe un mensaje de error detallado
+        res.status(500).json({ error: 'Fallo al generar el resumen personalizado con IA. Revisa la CONSOLA DEL SERVIDOR para el mensaje de error de la API de Gemini.' });
     }
 });
 // --- Iniciar el servidor ---
 async function startServer() {
-    await loadTokens();
     app.listen(PORT, () => {
         console.log(`Servidor del Portal de Afiliados escuchando en http://localhost:${PORT}`);
-        console.log('Si es la primera vez, visita http://localhost:3001/auth para autenticarte.');
+        console.log('Si tienes problemas, ¡revisa la CONSOLA del servidor! El error de la IA aparecerá allí.');
     });
 }
 
