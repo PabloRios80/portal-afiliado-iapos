@@ -5,6 +5,12 @@
  * * NOTA: La búsqueda de Estudios Complementarios se realiza a un microservicio separado en el puerto 4000.
  */
 
+// --- Variables Globales ---
+// Obtenida del HTML (inyectada por server.js). Apunta a http://localhost:4000 en local o la URL de Render en producción.
+const ESTUDIOS_API_URL = window.ESTUDIOS_API_URL || 'http://localhost:4000'; 
+// API URL del servicio principal (llama al mismo servidor Node.js que sirve este HTML)
+const API_BASE_PATH = '/api'; 
+
 // ==============================================================================
 // 1. CONFIGURACIÓN INICIAL (DOMContentLoaded)
 // ==============================================================================
@@ -380,6 +386,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     dashboardContenedor.innerHTML = dashboardHTML;
 
     // 3. Contacto Directo del Programa Día Preventivo (Ajustado)
+    // *** ESTE ES EL BLOQUE CORREGIDO: SE ELIMINA EL BOTÓN DESCARGAR PDF ***
     let accionesHTML = `
         <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
             <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
@@ -395,12 +402,13 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         </div>
 
         <div class="flex flex-wrap items-center justify-center py-4">
+            <!-- ESTE BOTÓN LLAMA A LA FUNCIÓN mostrarInformeEscrito, QUE USA SweetAlert2 Y window.print() -->
             <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
             </button>
-            <button onclick="descargarPDF('${nombre}', '${dni}')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
-                <i class="fas fa-file-pdf mr-2"></i> Descargar PDF
-            </button>
+            
+            <!-- EL BOTÓN DESCARGAR PDF HA SIDO ELIMINADO PARA EVITAR EL ReferenceError -->
+
             <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-share-alt mr-2"></i> Compartir Portal
             </button>
@@ -501,59 +509,36 @@ function cargarEstudiosTab(estudiosResult) {
 // ==============================================================================
 
 /**
- * Función que abre el informe escrito AI en un modal, separada para limpieza.
+ * Función que abre el informe escrito AI en un modal, separada para limpieza, 
+ * con opción directa de imprimir el contenido del modal.
  */
 function mostrarInformeEscrito(nombre, resumenAI) {
+    // Nota del programa Día Preventivo
+    const contactoHtml = `
+        <p class="mt-6 text-sm text-gray-700 border-t pt-4 italic">
+            Si desea mayor precisión sobre los resultados o hablar con un profesional del programa no dude en conectarse al te: 3424071702 o al mail diapreventivoiapos@diapreventivo.com
+        </p>
+    `;
+
     Swal.fire({
         title: `Informe Escrito AI de ${nombre}`,
-        // El contenido usa el backtick para manejar saltos de línea y Markdown
-        html: `<div class="text-left p-4 leading-relaxed">${resumenAI}</div>`, 
+        // Contenido con el resumen de la IA más la nota de contacto
+        html: `<div class="text-left p-4 leading-relaxed">${resumenAI}${contactoHtml}</div>`, 
         icon: 'info',
         confirmButtonText: 'Cerrar',
         customClass: {
             popup: 'swal2-popup w-full md:w-3/4 lg:w-4/5',
         },
-        // Opcional: Agregar un botón para imprimir el modal
+        // Botón para imprimir
         showDenyButton: true,
-        denyButtonText: '<i class="fas fa-print"></i> Imprimir',
+        denyButtonText: '<i class="fas fa-print"></i> Imprimir Informe',
         preDeny: () => {
-             // Lógica para imprimir solo el modal (usando impresión nativa)
+             // Imprime solo el contenido del modal de SweetAlert2
+             // Nota: En un entorno de desarrollo con iframe, esto puede imprimir la página entera.
+             // En una ventana de navegador real, el modal se maneja mejor.
             window.print();
-             return false; // Evita que se cierre el modal
+             return false; // Evita que el modal se cierre inmediatamente después de imprimir
         }
-    });
-}
-
-/**
- * Usa html2pdf.js para convertir el HTML en un archivo PDF descargable.
- */
-function descargarPDF(nombre, dni) {
-    const element = document.getElementById('informe-imprimible');
-
-    Swal.fire({
-        title: 'Generando PDF...',
-        text: 'Por favor, espera un momento mientras se crea el documento.',
-        allowOutsideClick: false,
-        showConfirmButton: false,
-        didOpen: () => {
-            Swal.showLoading();
-        }
-    });
-
-    const options = {
-        margin: [10, 10, 10, 10], // Margen en mm
-        filename: `Informe_IAPOS_${dni}_${nombre.replace(/\s/g, '_')}.pdf`, // Nombre del archivo
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
-    // La función html2pdf.js para generar el PDF
-    html2pdf().set(options).from(element).save().then(() => {
-        Swal.close(); // Cierra el loading de SweetAlert2
-    }).catch(error => {
-        console.error('Error al crear el PDF:', error);
-        Swal.fire('Error', 'No se pudo generar el PDF. Intenta nuevamente.', 'error');
     });
 }
 
@@ -561,7 +546,7 @@ function descargarPDF(nombre, dni) {
  * Función auxiliar para compartir el enlace del portal.
  */
 function compartirDashboard() {
-    const shareText = `¡He revisado mi informe de prevención en IAPOS! Revisa tu portal aquí: ${window.location.href}`;
+    const shareText = `¡Ingresa para ver el informe del Dia Preventivo IAPOS! Revisa tu portal aquí: ${window.location.href}`;
     // Usar document.execCommand('copy') como fallback seguro para entornos iframe
     try {
         const tempTextArea = document.createElement('textarea');
@@ -576,3 +561,5 @@ function compartirDashboard() {
         Swal.fire('Error', 'No se pudo copiar el enlace automáticamente. Por favor, cópialo manualmente.', 'error');
     }
 }
+
+// *** IMPORTANTE: LA FUNCIÓN descargarPDF HA SIDO ELIMINADA DE ESTE ARCHIVO. ***
