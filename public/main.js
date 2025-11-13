@@ -1,3 +1,10 @@
+/**
+ * Script de Lógica Principal del Portal de Afiliados
+ * Maneja la interacción con la hoja de cálculo de Google Sheets (a través del servidor)
+ * y la llamada a la API de Gemini para el análisis de informes.
+ * * NOTA: La búsqueda de Estudios Complementarios se realiza a un microservicio separado en el puerto 4000.
+ */
+
 // ==============================================================================
 // 1. CONFIGURACIÓN INICIAL (DOMContentLoaded)
 // ==============================================================================
@@ -24,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (dni) {
                 Swal.fire({
                     title: 'Buscando tu informe...',
+                    text: 'Recuperando datos, generando análisis de IA y buscando estudios complementarios.',
                     allowOutsideClick: false,
                     didOpen: () => {
                         Swal.showLoading();
@@ -51,12 +59,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
 
-                    // 3. Datos encontrados con éxito. Iniciar análisis de IA.
-                    // Llamar a la IA para obtener el resumen
-                    const resumenAI = await obtenerResumenAI(dataResult.persona); 
+                    // 3. Datos encontrados con éxito. Iniciar análisis de IA y Estudios.
+                    
+                    // Llamadas paralelas a IA y Estudios Complementarios (puerto 4000)
+                    const [resumenAI, estudiosResult] = await Promise.all([
+                        obtenerResumenAI(dataResult.persona), 
+                        obtenerLinkEstudios(dataResult.persona.DNI) // Usamos el DNI del resultado
+                    ]);
 
                     // 4. Cargar el Portal Personal de Salud (Nueva Vista)
-                    cargarPortalPersonal(dataResult.persona, resumenAI);
+                    // Pasamos los resultados de los estudios aquí
+                    cargarPortalPersonal(dataResult.persona, resumenAI, estudiosResult);
                     
                     Swal.close(); // Cerrar el loading
 
@@ -75,6 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /**
  * Llama al servidor para obtener el resumen de IA.
+ * @param {Object} persona Datos del paciente.
  */
 async function obtenerResumenAI(persona) {
     const response = await fetch('/api/analizar-informe', {
@@ -92,7 +106,41 @@ async function obtenerResumenAI(persona) {
     const data = await response.json();
     return data.resumen;
 }
-// ... (resto del código anterior)
+
+/**
+ * Llama al nuevo microservicio de Estudios Complementarios (puerto 4000).
+ * @param {string} dni El DNI del paciente.
+ * @returns {Promise<Object>} El enlace del estudio o un error 404.
+ */
+async function obtenerLinkEstudios(dni) {
+    const studyApiUrl = `http://localhost:4000/api/buscar-estudios?dni=${dni}`;
+
+    try {
+        const response = await fetch(studyApiUrl);
+        const data = await response.json();
+
+        if (response.status === 404) {
+            // DNI no encontrado en la hoja de Laboratorio
+            return { link: null, error: data.error };
+        }
+
+        if (response.ok) {
+            // Éxito: devuelve el link o null si la celda G estaba vacía
+            return data;
+        } else {
+            // Manejar otros errores HTTP del microservicio de Estudios
+            throw new Error(data.error || `Error del microservicio de Estudios (${response.status})`);
+        }
+    } catch (error) {
+        console.error("Fallo al buscar estudios complementarios:", error);
+        // Devolvemos un objeto de error para mostrar un mensaje informativo
+        return { 
+            link: null, 
+            error: `El servicio de Estudios Complementarios (puerto 4000) no está disponible o falló.` 
+        };
+    }
+}
+
 
 /**
  * Mapea un valor de columna a un nivel de riesgo (color/ícono).
@@ -118,7 +166,9 @@ function getRiskLevel(key, value) {
         v.includes('no indicado') || // Ácido Fólico
         v.includes('no aplica') || // No Aplica
         v.includes('bajo') || 
-        v.includes('realiza') || 
+        v.includes('realiza') ||
+        v.includes('Completo') || // Inmunizaciones 
+        v.includes('sí') ||
         v.includes('riesgo bajo') || 
         v.includes('negativo')) {
         return { color: 'green', icon: 'check', text: 'Calma' };
@@ -131,7 +181,6 @@ function getRiskLevel(key, value) {
         v.includes('elevado') || 
         v.includes('anormal') || 
         v.includes('alto') || 
-        v.includes('sí') || 
         v.includes('no control') || 
         v.includes('No realiza') || 
         v.includes('pendiente') || 
@@ -171,15 +220,19 @@ function getRiskLevel(key, value) {
 
 /**
  * Carga el Portal Personal de Salud y configura la navegación.
+ * @param {Object} persona Datos del paciente.
+ * @param {string} resumenAI Resumen generado por la IA.
+ * @param {Object} estudiosResult Resultado de la búsqueda de estudios.
  */
-function cargarPortalPersonal(persona, resumenAI) {
+function cargarPortalPersonal(persona, resumenAI, estudiosResult) {
     // 1. Ocultar la vista inicial y mostrar el portal
     document.getElementById('vista-inicial').style.display = 'none';
     document.getElementById('portal-salud-container').style.display = 'block';
 
     // 2. Cargar el contenido de las pestañas
     cargarDiaPreventivoTab(persona, resumenAI);
-    cargarEstudiosTab(); // Carga la lista estática de estudios
+    // *** AHORA PASAMOS EL RESULTADO DINÁMICO A LA FUNCIÓN DE LA PESTAÑA DE ESTUDIOS ***
+    cargarEstudiosTab(estudiosResult); 
     // cargarOtrosServiciosTab(); // Función pendiente
 
     // 3. Construir la navegación (Botones)
@@ -207,6 +260,7 @@ function cargarPortalPersonal(persona, resumenAI) {
     mostrarPestana('tab-dia-preventivo'); // Mostrar la pestaña principal por defecto
     window.scrollTo(0, 0);
 }
+
 
 /**
  * Función para manejar el cambio entre pestañas.
@@ -240,6 +294,8 @@ function mostrarPestana(tabId) {
 
 /**
  * Genera el contenido para la pestaña Día Preventivo (Dashboard Visual + Botones de IA).
+ * @param {Object} persona Datos del paciente.
+ * @param {string} resumenAI Resumen generado por la IA (puede contener un error).
  */
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
@@ -247,9 +303,32 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
 
+    // --- MANEJO DE FALLO DE LA IA (ROBUSTEZ) ---
+    let resumenAILimpio = resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+    let summaryContent;
+
+    if (!resumenAI || resumenAI.includes("ERROR CRÍTICO DE GEMINI") || resumenAI.includes("ERROR del servidor")) {
+        summaryContent = `
+            <div class="p-4 bg-red-100 border-l-4 border-red-500 rounded-lg shadow-sm">
+                <strong class="text-red-700">🚨 Error Temporal de Análisis:</strong> 
+                El servicio de Inteligencia Artificial (IA) para generar el resumen está temporalmente sobrecargado o no pudo procesar la solicitud. 
+                <br>Por favor, revisa el detalle de indicadores a continuación, e intenta acceder al resumen escrito más tarde.
+            </div>
+        `;
+    } else {
+        summaryContent = `<p class="text-base leading-relaxed">${resumenAILimpio}</p>`;
+    }
+    // ------------------------------------------
+
     // 1. Construir el HTML del dashboard (Resultado a Resultado)
     let dashboardHTML = `
         <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
+            <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Tu Resumen de Salud (Generado por IA)</h2>
+            <div class="prose max-w-none p-4 bg-gray-50 mb-6 rounded-lg border">
+                ${summaryContent}
+            </div>
+
+            <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Detalle de Indicadores</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     `;
 
@@ -300,45 +379,116 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     // 2. Inyectar el HTML del Dashboard
     dashboardContenedor.innerHTML = dashboardHTML;
 
-    // 3. Construir e inyectar los botones de acción
-    // Nota: Usamos replace(/'/g, "\\'") para escapar comillas simples dentro de la cadena que pasa a la función
-    accionesContenedor.innerHTML = `
-        <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mr-4">
-            <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
-        </button>
-        <button onclick="descargarPDF('${nombre}', '${dni}')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mr-4">
-            <i class="fas fa-file-pdf mr-2"></i> Descargar PDF
-        </button>
-        <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300">
-            <i class="fas fa-share-alt mr-2"></i> Compartir Portal
-        </button>
+    // 3. Contacto Directo del Programa Día Preventivo (Ajustado)
+    let accionesHTML = `
+        <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
+            <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
+            <p class="text-gray-700 mb-1">
+                <span class="font-semibold">Teléfono Consultas:</span> 
+                <a href="tel:3424071702" class="text-blue-600 hover:text-blue-800 font-medium">342 407-1702</a>
+            </p>
+            <p class="text-gray-700">
+                <span class="font-semibold">Mail de Consultas:</span> 
+                <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 hover:text-blue-800 font-medium">diapreventivoiapos@diapreventivo.com</a>
+            </p>
+            <p class="text-xs text-gray-500 mt-2 italic">Si desea mayor precisión sobre los resultados o hablar con un profesional del programa, no dude en conectarse a estos medios.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-center py-4">
+            <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
+                <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
+            </button>
+            <button onclick="descargarPDF('${nombre}', '${dni}')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
+                <i class="fas fa-file-pdf mr-2"></i> Descargar PDF
+            </button>
+            <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
+                <i class="fas fa-share-alt mr-2"></i> Compartir Portal
+            </button>
+        </div>
     `;
+
+    // 4. Inyectar el HTML de Acciones y Contacto
+    accionesContenedor.innerHTML = accionesHTML;
 }
 
 /**
- * Genera el contenido estático de la pestaña Estudios Complementarios.
+ * Genera el contenido estático/dinámico de la pestaña Estudios Complementarios.
+ * Ahora incluye la integración con el microservicio de Laboratorio.
+ * @param {Object} estudiosResult Resultado de la búsqueda de estudios (link o error).
  */
-function cargarEstudiosTab() {
+function cargarEstudiosTab(estudiosResult) {
     const contenedor = document.getElementById('estudios-complementarios-lista');
 
     const estudios = [
-        { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', link: '#' },
-        { nombre: 'Mamografía', icon: 'fas fa-x-ray', link: '#' },
-        { nombre: 'Ecografía', icon: 'fas fa-ultrasound', link: '#' },
-        { nombre: 'Espirometría', icon: 'fas fa-lungs', link: '#' },
-        { nombre: 'Enfermería', icon: 'fas fa-user-nurse', link: '#' },
-        { nombre: 'Densitometría', icon: 'fas fa-bone', link: '#' },
-        { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', link: '#' },
-        { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', link: '#' },
+        // El primer elemento es el que puede ser dinámico
+        { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', link: '#', available: false },
+        { nombre: 'Mamografía', icon: 'fas fa-x-ray', link: '#', available: false },
+        { nombre: 'Ecografía', icon: 'fas fa-ultrasound', link: '#', available: false },
+        { nombre: 'Espirometría', icon: 'fas fa-lungs', link: '#', available: false },
+        { nombre: 'Enfermería', icon: 'fas fa-user-nurse', link: '#', available: false },
+        { nombre: 'Densitometría', icon: 'fas fa-bone', link: '#', available: false },
+        { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', link: '#', available: false },
+        { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', link: '#', available: false },
     ];
 
     let html = '';
-    estudios.forEach(estudio => {
+    
+    // 1. Integración del resultado dinámico del laboratorio (si existe)
+    let laboratorioDisponible = false;
+    if (estudiosResult && estudiosResult.link) {
+        laboratorioDisponible = true;
+        // Encuentra la entrada de Laboratorio Bioquímico y actualiza sus propiedades
+        const labIndex = estudios.findIndex(e => e.nombre === 'Laboratorio Bioquímico');
+        if (labIndex !== -1) {
+            estudios[labIndex].link = estudiosResult.link;
+            estudios[labIndex].available = true;
+        }
+    } 
+    
+    // 2. Mostrar mensaje de error si el microservicio falló o el DNI no fue encontrado
+    if (estudiosResult && estudiosResult.error) {
+        let alertClass = 'bg-yellow-100 border-yellow-400 text-yellow-700';
+        let icon = 'fas fa-info-circle';
+
+        // Si es un error de conexión, mostrar en rojo/advertencia
+        if (estudiosResult.error.includes("disponible o falló")) {
+            alertClass = 'bg-red-100 border-red-400 text-red-700';
+            icon = 'fas fa-exclamation-triangle';
+        }
+        
         html += `
-            <a href="${estudio.link}" target="_blank" class="flex items-center p-4 bg-white rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 border-purple-500">
-                <i class="${estudio.icon} text-purple-600 text-2xl mr-4"></i>
+            <div class="${alertClass} p-3 rounded-lg my-4 text-sm border-l-4" role="alert">
+                <i class="${icon} mr-2"></i> 
+                <strong>Mensaje del Servicio:</strong> ${estudiosResult.error}
+            </div>
+        `;
+    }
+
+    // 3. Construir el listado de estudios
+    estudios.forEach(estudio => {
+        const isAvailable = estudio.available;
+        // Clases dinámicas: verde si disponible, morado por defecto si pendiente
+        const linkClasses = isAvailable 
+            ? 'border-green-500 hover:border-green-700 bg-green-50 hover:bg-green-100'
+            : 'border-purple-500 opacity-70 cursor-default';
+        const iconClasses = isAvailable ? 'text-green-600' : 'text-purple-600';
+        
+        const href = isAvailable ? estudio.link : 'javascript:void(0)';
+        
+        // Manejador de click para enlaces no disponibles
+        const onClickHandler = isAvailable 
+            ? '' 
+            : 'onclick="Swal.fire(\'Aún No Disponible\', \'Este estudio no tiene resultados cargados todavía.\', \'info\')"';
+
+        html += `
+            <a href="${href}" ${isAvailable ? 'target="_blank" rel="noopener noreferrer"' : ''} ${onClickHandler}
+                class="flex items-center p-4 bg-white rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 ${linkClasses}">
+                <i class="${estudio.icon} ${iconClasses} text-2xl mr-4"></i>
                 <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
-                <i class="fas fa-chevron-right ml-auto text-gray-400"></i>
+                <span class="ml-auto text-sm font-medium ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-400'}">
+                    ${isAvailable ? 'VER RESULTADO' : 'PENDIENTE'}
+                </span>
+                <i class="fas fa-chevron-right ml-2 text-gray-400"></i>
             </a>
         `;
     });

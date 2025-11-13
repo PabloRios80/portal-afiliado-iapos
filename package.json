@@ -5,6 +5,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "google-spreadsheet": "^5.0.2",
     "googleapis": "^161.0.0"
   }
 }
