@@ -67,15 +67,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     // 3. Datos encontrados con éxito. Iniciar análisis de IA y Estudios.
                     
-                    // Llamadas paralelas a IA y Estudios Complementarios (puerto 4000)
-                    const [resumenAI, estudiosResult] = await Promise.all([
+                    // LLAMADAS PARALELAS ESPECÍFICAS: MÁS EFICIENTE
+                    const dniToSearch = dataResult.persona.DNI;
+
+                    const [resumenAI, labResult, mamografiaResult] = await Promise.all([
                         obtenerResumenAI(dataResult.persona), 
-                        obtenerLinkEstudios(dataResult.persona.DNI) // Usamos el DNI del resultado
+                        obtenerLinkEstudios(dniToSearch, 'laboratorio'), // Búsqueda específica y paralela
+                        obtenerLinkEstudios(dniToSearch, 'mamografia')  // Búsqueda específica y paralela
                     ]);
 
                     // 4. Cargar el Portal Personal de Salud (Nueva Vista)
-                    // Pasamos los resultados de los estudios aquí
-                    cargarPortalPersonal(dataResult.persona, resumenAI, estudiosResult);
+                    // Pasamos TODOS los resultados de los estudios como un objeto
+                    const estudiosResults = {
+                        laboratorio: labResult, // {link: '...', tipo: 'laboratorio', ...}
+                        mamografia: mamografiaResult // {link: '...', tipo: 'mamografia', ...}
+                        // Aquí se podrían añadir más estudios si es necesario
+                    };
+                    
+                    cargarPortalPersonal(dataResult.persona, resumenAI, estudiosResults);
                     
                     Swal.close(); // Cerrar el loading
 
@@ -114,35 +123,40 @@ async function obtenerResumenAI(persona) {
 }
 
 /**
- * Llama al nuevo microservicio de Estudios Complementarios (puerto 4000).
+ * Llama al microservicio de Estudios Complementarios (puerto 4000) para un 
+ * estudio ESPECÍFICO (ej. 'laboratorio' o 'mamografia').
  * @param {string} dni El DNI del paciente.
- * @returns {Promise<Object>} El enlace del estudio o un error 404.
+ * @param {string} studyType El tipo de estudio a buscar ('laboratorio', 'mamografia').
+ * @returns {Promise<Object>} El enlace del estudio o un objeto de error.
  */
-async function obtenerLinkEstudios(dni) {
-    const studyApiUrl = `http://localhost:4000/api/buscar-estudios?dni=${dni}`;
+async function obtenerLinkEstudios(dni, studyType) {
+    // La URL ahora incluye el parámetro 'tipo'
+    const studyApiUrl = `${ESTUDIOS_API_URL}/api/buscar-estudios?dni=${dni}&tipo=${studyType}`;
 
     try {
         const response = await fetch(studyApiUrl);
         const data = await response.json();
 
+        // El microservicio ahora devuelve 404 si el DNI o el link no se encontraron.
         if (response.status === 404) {
-            // DNI no encontrado en la hoja de Laboratorio
-            return { link: null, error: data.error };
+            return { link: null, error: data.error, tipo: studyType };
         }
 
-        if (response.ok) {
-            // Éxito: devuelve el link o null si la celda G estaba vacía
-            return data;
+        if (response.ok && data.link) {
+            // Éxito: link encontrado
+            return { link: data.link, tipo: studyType, mensaje: data.mensaje };
         } else {
-            // Manejar otros errores HTTP del microservicio de Estudios
-            throw new Error(data.error || `Error del microservicio de Estudios (${response.status})`);
+             // Esto captura si el microservicio devuelve 500 o si la respuesta no es .ok
+             const errorMessage = data.error || `Error del microservicio de Estudios (${response.status} - ${studyType})`;
+             throw new Error(errorMessage);
         }
     } catch (error) {
-        console.error("Fallo al buscar estudios complementarios:", error);
+        console.error(`Fallo al buscar estudios complementarios (${studyType}):`, error);
         // Devolvemos un objeto de error para mostrar un mensaje informativo
         return { 
             link: null, 
-            error: `El servicio de Estudios Complementarios (puerto 4000) no está disponible o falló.` 
+            error: `El servicio de Estudios Complementarios falló o no está disponible para ${studyType}.`,
+            tipo: studyType
         };
     }
 }
@@ -214,7 +228,7 @@ function getRiskLevel(key, value) {
 
     // Si el valor no es claro pero existe, por defecto es atención.
     if (v.length > 0) {
-        return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
+        return { color: 'gray', icon: 'question', text: 'Sin Dato' };
     }
     
     // Si el valor está vacío o no mapeado
@@ -228,17 +242,17 @@ function getRiskLevel(key, value) {
  * Carga el Portal Personal de Salud y configura la navegación.
  * @param {Object} persona Datos del paciente.
  * @param {string} resumenAI Resumen generado por la IA.
- * @param {Object} estudiosResult Resultado de la búsqueda de estudios.
+ * @param {Object} estudiosResults Objeto con los resultados de estudios específicos.
  */
-function cargarPortalPersonal(persona, resumenAI, estudiosResult) {
+function cargarPortalPersonal(persona, resumenAI, estudiosResults) {
     // 1. Ocultar la vista inicial y mostrar el portal
     document.getElementById('vista-inicial').style.display = 'none';
     document.getElementById('portal-salud-container').style.display = 'block';
 
     // 2. Cargar el contenido de las pestañas
     cargarDiaPreventivoTab(persona, resumenAI);
-    // *** AHORA PASAMOS EL RESULTADO DINÁMICO A LA FUNCIÓN DE LA PESTAÑA DE ESTUDIOS ***
-    cargarEstudiosTab(estudiosResult); 
+    // *** AHORA PASAMOS TODOS LOS RESULTADOS DE ESTUDIOS (Lab y Mamografia) ***
+    cargarEstudiosTab(estudiosResults); 
     // cargarOtrosServiciosTab(); // Función pendiente
 
     // 3. Construir la navegación (Botones)
@@ -386,7 +400,6 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     dashboardContenedor.innerHTML = dashboardHTML;
 
     // 3. Contacto Directo del Programa Día Preventivo (Ajustado)
-    // *** ESTE ES EL BLOQUE CORREGIDO: SE ELIMINA EL BOTÓN DESCARGAR PDF ***
     let accionesHTML = `
         <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
             <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
@@ -407,8 +420,6 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
                 <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
             </button>
             
-            <!-- EL BOTÓN DESCARGAR PDF HA SIDO ELIMINADO PARA EVITAR EL ReferenceError -->
-
             <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-share-alt mr-2"></i> Compartir Portal
             </button>
@@ -421,80 +432,58 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
 
 /**
  * Genera el contenido estático/dinámico de la pestaña Estudios Complementarios.
- * Ahora incluye la integración con el microservicio de Laboratorio.
- * @param {Object} estudiosResult Resultado de la búsqueda de estudios (link o error).
+ * **CORRECCIÓN:** Ahora recibe un objeto {laboratorio: result, mamografia: result}
+ * y mapea las claves de los resultados con las claves en la lista de estudios.
+ * @param {Object} estudiosResults Objeto con los resultados de estudios específicos (ej. {laboratorio: {...}, mamografia: {...}}).
  */
-function cargarEstudiosTab(estudiosResult) {
+function cargarEstudiosTab(estudiosResults) {
     const contenedor = document.getElementById('estudios-complementarios-lista');
 
-    const estudios = [
-        // El primer elemento es el que puede ser dinámico
-        { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', link: '#', available: false },
-        { nombre: 'Mamografía', icon: 'fas fa-x-ray', link: '#', available: false },
-        { nombre: 'Ecografía', icon: 'fas fa-ultrasound', link: '#', available: false },
-        { nombre: 'Espirometría', icon: 'fas fa-lungs', link: '#', available: false },
-        { nombre: 'Enfermería', icon: 'fas fa-user-nurse', link: '#', available: false },
-        { nombre: 'Densitometría', icon: 'fas fa-bone', link: '#', available: false },
-        { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', link: '#', available: false },
-        { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', link: '#', available: false },
+    // Definición maestra de todos los estudios
+    const estudiosMaestros = [
+        { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', key: 'laboratorio' },
+        { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia' },
+        { nombre: 'Ecografía', icon: 'fas fa-ultrasound', key: 'ecografia' },
+        { nombre: 'Espirometría', icon: 'fas fa-lungs', key: 'espirometria' },
+        { nombre: 'Enfermería', icon: 'fas fa-user-nurse', key: 'enfermeria' },
+        { nombre: 'Densitometría', icon: 'fas fa-bone', key: 'densitometria' },
+        { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', key: 'vcc' },
+        { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', key: 'otros' },
     ];
 
     let html = '';
     
-    // 1. Integración del resultado dinámico del laboratorio (si existe)
-    let laboratorioDisponible = false;
-    if (estudiosResult && estudiosResult.link) {
-        laboratorioDisponible = true;
-        // Encuentra la entrada de Laboratorio Bioquímico y actualiza sus propiedades
-        const labIndex = estudios.findIndex(e => e.nombre === 'Laboratorio Bioquímico');
-        if (labIndex !== -1) {
-            estudios[labIndex].link = estudiosResult.link;
-            estudios[labIndex].available = true;
-        }
-    } 
-    
-    // 2. Mostrar mensaje de error si el microservicio falló o el DNI no fue encontrado
-    if (estudiosResult && estudiosResult.error) {
-        let alertClass = 'bg-yellow-100 border-yellow-400 text-yellow-700';
-        let icon = 'fas fa-info-circle';
-
-        // Si es un error de conexión, mostrar en rojo/advertencia
-        if (estudiosResult.error.includes("disponible o falló")) {
-            alertClass = 'bg-red-100 border-red-400 text-red-700';
-            icon = 'fas fa-exclamation-triangle';
-        }
+    // **NUEVA LÓGICA DE PROCESAMIENTO MULTIPLE**
+    estudiosMaestros.forEach(estudio => {
+        // Busca el resultado en el objeto que pasamos (estudiosResults) usando la clave ('laboratorio', 'mamografia', etc.)
+        const result = estudiosResults[estudio.key];
         
-        html += `
-            <div class="${alertClass} p-3 rounded-lg my-4 text-sm border-l-4" role="alert">
-                <i class="${icon} mr-2"></i> 
-                <strong>Mensaje del Servicio:</strong> ${estudiosResult.error}
-            </div>
-        `;
-    }
+        // 1. Determinar si hay un link disponible
+        const isAvailable = result && result.link;
+        const link = isAvailable ? result.link : 'javascript:void(0)';
+        const statusText = isAvailable ? 'VER RESULTADO' : 'PENDIENTE';
 
-    // 3. Construir el listado de estudios
-    estudios.forEach(estudio => {
-        const isAvailable = estudio.available;
-        // Clases dinámicas: verde si disponible, morado por defecto si pendiente
+        // 2. Clases dinámicas: verde si disponible, morado por defecto si pendiente
         const linkClasses = isAvailable 
             ? 'border-green-500 hover:border-green-700 bg-green-50 hover:bg-green-100'
             : 'border-purple-500 opacity-70 cursor-default';
         const iconClasses = isAvailable ? 'text-green-600' : 'text-purple-600';
         
-        const href = isAvailable ? estudio.link : 'javascript:void(0)';
+        // 3. Manejador de click: Si no está disponible, muestra el error de la búsqueda o un mensaje genérico
+        const defaultErrorMessage = 'Este estudio no tiene resultados cargados todavía.';
+        const errorMessage = result && result.error ? `Error en la búsqueda: ${result.error}` : defaultErrorMessage;
         
-        // Manejador de click para enlaces no disponibles
         const onClickHandler = isAvailable 
             ? '' 
-            : 'onclick="Swal.fire(\'Aún No Disponible\', \'Este estudio no tiene resultados cargados todavía.\', \'info\')"';
+            : `onclick="Swal.fire('Aún No Disponible', '${errorMessage.replace(/'/g, "\\'")}', 'info')"`;
 
         html += `
-            <a href="${href}" ${isAvailable ? 'target="_blank" rel="noopener noreferrer"' : ''} ${onClickHandler}
+            <a href="${link}" ${isAvailable ? 'target="_blank" rel="noopener noreferrer"' : ''} ${onClickHandler}
                 class="flex items-center p-4 bg-white rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 ${linkClasses}">
                 <i class="${estudio.icon} ${iconClasses} text-2xl mr-4"></i>
                 <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
                 <span class="ml-auto text-sm font-medium ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-400'}">
-                    ${isAvailable ? 'VER RESULTADO' : 'PENDIENTE'}
+                    ${statusText}
                 </span>
                 <i class="fas fa-chevron-right ml-2 text-gray-400"></i>
             </a>
@@ -534,8 +523,6 @@ function mostrarInformeEscrito(nombre, resumenAI) {
         denyButtonText: '<i class="fas fa-print"></i> Imprimir Informe',
         preDeny: () => {
              // Imprime solo el contenido del modal de SweetAlert2
-             // Nota: En un entorno de desarrollo con iframe, esto puede imprimir la página entera.
-             // En una ventana de navegador real, el modal se maneja mejor.
             window.print();
              return false; // Evita que el modal se cierre inmediatamente después de imprimir
         }
@@ -561,5 +548,3 @@ function compartirDashboard() {
         Swal.fire('Error', 'No se pudo copiar el enlace automáticamente. Por favor, cópialo manualmente.', 'error');
     }
 }
-
-// *** IMPORTANTE: LA FUNCIÓN descargarPDF HA SIDO ELIMINADA DE ESTE ARCHIVO. ***
