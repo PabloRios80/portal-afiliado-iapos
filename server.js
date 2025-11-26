@@ -10,6 +10,17 @@ const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
+
+// ----------------------------------------------------------------------
+// CONFIGURACIÓN DE URL DEL MICROSERVICIO DE ESTUDIOS (CRÍTICO)
+// ----------------------------------------------------------------------
+// Lee la variable de entorno. En Render será la URL pública (https://...).
+// En local, si no está configurada, usará http://localhost:4000
+const ESTUDIOS_API_URL = process.env.ESTUDIOS_API_URL || 'http://localhost:4000';
+console.log(`📡 URL de Microservicio de Estudios configurada: ${ESTUDIOS_API_URL}`);
+// ----------------------------------------------------------------------
+
+
 // --- CONFIGURACIÓN DE AUTENTICACIÓN ---
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
@@ -20,8 +31,6 @@ const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_U
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
 const TOKEN_PATH = path.join(__dirname, 'token.json');
 
-// Servir archivos estáticos (index.html, main.js, etc.)
-app.use(express.static(path.join(__dirname, 'public')));
 
 // 🚀 INICIALIZACIÓN DE GEMINI
 const ai = new GoogleGenAI({}); 
@@ -201,6 +210,43 @@ app.post('/api/analizar-informe', async (req, res) => {
         res.status(500).json({ error: 'Fallo al generar el resumen personalizado con IA. Revisa la CONSOLA DEL SERVIDOR para el mensaje de error de la API de Gemini.' });
     }
 });
+
+// =========================================================================
+// RUTA DE INYECCIÓN CRÍTICA: SIRVE index.html DINÁMICAMENTE
+// =========================================================================
+app.get('/', (req, res) => {
+    // 1. Apunta al archivo index.html dentro del directorio 'public'
+    const filePath = path.join(__dirname, 'public', 'index.html');
+
+    try {
+        // 2. Leer el contenido del archivo index.html
+        let htmlContent = fs.readFileSync(filePath, 'utf8');
+
+        // 3. Definir el código JavaScript de inyección
+        // Usamos el valor de la variable de entorno ESTUDIOS_API_URL.
+        const injectionScript = `
+        <script>
+            // CRÍTICO: Inyectando la URL del servicio de Estudios para el frontend.
+            window.ESTUDIOS_API_URL = '${ESTUDIOS_API_URL}';
+            console.log('API de Estudios configurada en:', window.ESTUDIOS_API_URL);
+        </script>
+        `;
+
+        // 4. Insertar el script de inyección justo antes de la etiqueta </head>
+        htmlContent = htmlContent.replace('</head>', `${injectionScript}</head>`);
+        
+        // 5. Enviar el HTML modificado al cliente
+        res.send(htmlContent);
+    } catch (error) {
+        console.error("Error al servir o modificar index.html:", error);
+        res.status(500).send("Error interno al cargar la aplicación.");
+    }
+});
+
+// Servir el resto de archivos estáticos (como main.js, styles.css, etc.)
+// NOTA: Esta línea debe ir DESPUÉS de app.get('/') para que la ruta dinámica la anule
+app.use(express.static(path.join(__dirname, 'public')));
+
 // --- Iniciar el servidor ---
 async function startServer() {
     app.listen(PORT, () => {
