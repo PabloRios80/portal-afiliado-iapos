@@ -70,17 +70,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     // LLAMADAS PARALELAS ESPECÍFICAS: MÁS EFICIENTE
                     const dniToSearch = dataResult.persona.DNI;
 
-                    const [resumenAI, labResult, mamografiaResult] = await Promise.all([
+                    const [resumenAI, labResult, mamografiaResult, ecografiaResult, espirometriaResult, enfermeriaResult, densitometriaResult, vccResult] = await Promise.all([
                         obtenerResumenAI(dataResult.persona), 
                         obtenerLinkEstudios(dniToSearch, 'laboratorio'), // Búsqueda específica y paralela
-                        obtenerLinkEstudios(dniToSearch, 'mamografia')  // Búsqueda específica y paralela
+                        obtenerLinkEstudios(dniToSearch, 'mamografia'),
+                        obtenerLinkEstudios(dniToSearch, 'ecografia'),
+                        obtenerLinkEstudios(dniToSearch, 'espirometria'),
+                        obtenerLinkEstudios(dniToSearch, 'enfermeria'),
+                        obtenerLinkEstudios(dniToSearch, 'densitometria'),
+                        obtenerLinkEstudios(dniToSearch, 'vcc') // Búsqueda específica y paralela
                     ]);
 
                     // 4. Cargar el Portal Personal de Salud (Nueva Vista)
                     // Pasamos TODOS los resultados de los estudios como un objeto
                     const estudiosResults = {
                         laboratorio: labResult, // {link: '...', tipo: 'laboratorio', ...}
-                        mamografia: mamografiaResult // {link: '...', tipo: 'mamografia', ...}
+                        mamografia: mamografiaResult,
+                        ecografia: ecografiaResult,
+                        espirometria: espirometriaResult,
+                        enfermeria: enfermeriaResult,
+                        densitometria: densitometriaResult,
+                        vcc: vccResult
+                        // {link: '...', tipo: 'mamografia', ...}
                         // Aquí se podrían añadir más estudios si es necesario
                     };
                     
@@ -147,8 +158,8 @@ async function obtenerLinkEstudios(dni, studyType) {
             return { link: data.link, tipo: studyType, mensaje: data.mensaje };
         } else {
              // Esto captura si el microservicio devuelve 500 o si la respuesta no es .ok
-             const errorMessage = data.error || `Error del microservicio de Estudios (${response.status} - ${studyType})`;
-             throw new Error(errorMessage);
+            const errorMessage = data.error || `Error del microservicio de Estudios (${response.status} - ${studyType})`;
+            throw new Error(errorMessage);
         }
     } catch (error) {
         console.error(`Fallo al buscar estudios complementarios (${studyType}):`, error);
