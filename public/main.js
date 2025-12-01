@@ -69,32 +69,50 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     // LLAMADAS PARALELAS ESPECÍFICAS: MÁS EFICIENTE
                     const dniToSearch = dataResult.persona.DNI;
-
-                    const [resumenAI, labResult, mamografiaResult, ecografiaResult, espirometriaResult, enfermeriaResult, densitometriaResult, vccResult] = await Promise.all([
+                    // AÑADIDOS: ecomamaria, oftalmologia, odontologia, biopsia
+                    const [
+                        resumenAI, 
+                        labResult, 
+                        mamografiaResult, 
+                        ecografiaResult, 
+                        ecomamariaResult, // <-- NUEVO: Eco mamaria
+                        espirometriaResult, 
+                        enfermeriaResult, 
+                        densitometriaResult, 
+                        vccResult,
+                        oftalmologiaResult, // <-- NUEVO: Oftalmología
+                        odontologiaResult,  // <-- NUEVO: Odontología
+                        biopsiaResult       // <-- NUEVO: Biopsia
+                    ] = await Promise.all([
                         obtenerResumenAI(dataResult.persona), 
-                        obtenerLinkEstudios(dniToSearch, 'laboratorio'), // Búsqueda específica y paralela
+                        obtenerLinkEstudios(dniToSearch, 'laboratorio'), 
                         obtenerLinkEstudios(dniToSearch, 'mamografia'),
                         obtenerLinkEstudios(dniToSearch, 'ecografia'),
+                        obtenerLinkEstudios(dniToSearch, 'ecomamaria'), // <-- Llamada Eco Mamaria
                         obtenerLinkEstudios(dniToSearch, 'espirometria'),
                         obtenerLinkEstudios(dniToSearch, 'enfermeria'),
                         obtenerLinkEstudios(dniToSearch, 'densitometria'),
-                        obtenerLinkEstudios(dniToSearch, 'vcc') // Búsqueda específica y paralela
+                        obtenerLinkEstudios(dniToSearch, 'vcc'),
+                        obtenerLinkEstudios(dniToSearch, 'oftalmologia'), // <-- Llamada Oftalmología
+                        obtenerLinkEstudios(dniToSearch, 'odontologia'),  // <-- Llamada Odontología
+                        obtenerLinkEstudios(dniToSearch, 'biopsia')       // <-- Llamada Biopsia
                     ]);
 
                     // 4. Cargar el Portal Personal de Salud (Nueva Vista)
                     // Pasamos TODOS los resultados de los estudios como un objeto
                     const estudiosResults = {
-                        laboratorio: labResult, // {link: '...', tipo: 'laboratorio', ...}
+                        laboratorio: labResult, 
                         mamografia: mamografiaResult,
                         ecografia: ecografiaResult,
+                        ecomamaria: ecomamariaResult, // <-- Resultado Eco Mamaria
                         espirometria: espirometriaResult,
                         enfermeria: enfermeriaResult,
                         densitometria: densitometriaResult,
-                        vcc: vccResult
-                        // {link: '...', tipo: 'mamografia', ...}
-                        // Aquí se podrían añadir más estudios si es necesario
+                        vcc: vccResult,
+                        oftalmologia: oftalmologiaResult, // <-- Resultado Oftalmología
+                        odontologia: odontologiaResult,  // <-- Resultado Odontología
+                        biopsia: biopsiaResult           // <-- Resultado Biopsia
                     };
-                    
                     cargarPortalPersonal(dataResult.persona, resumenAI, estudiosResults);
                     
                     Swal.close(); // Cerrar el loading
@@ -459,6 +477,9 @@ function cargarEstudiosTab(estudiosResults) {
         { nombre: 'Enfermería', icon: 'fas fa-user-nurse', key: 'enfermeria' },
         { nombre: 'Densitometría', icon: 'fas fa-bone', key: 'densitometria' },
         { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', key: 'vcc' },
+        { nombre: 'Odontología', icon: 'fas fa-tooth', key: 'odontologia' }, // ¡AÑADIDO!
+        { nombre: 'Biopsia', icon: 'fas fa-microscope', key: 'biopsia' }, // ¡AÑADIDO!
+        { nombre: 'Oftalmología', icon: 'fas fa-eye', key: 'oftalmologia' },
         { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', key: 'otros' },
     ];
 
