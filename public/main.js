@@ -2,15 +2,28 @@
  * Script de Lógica Principal del Portal de Afiliados
  * Maneja la interacción con la hoja de cálculo de Google Sheets (a través del servidor)
  * y la llamada a la API de Gemini para el análisis de informes.
- * * NOTA: La búsqueda de Estudios Complementarios se realiza a un microservicio separado en el puerto 4000.
- * * MODIFICACIONES: Implementación de la funcionalidad de historial de fechas
+ *
+ * * MODIFICACIONES CRÍTICAS APLICADAS:
+ * 1. Implementación de un selector de fecha dentro de la pestaña "Día Preventivo".
+ * 2. Se almacena el historial completo de informes en la variable global `allReports`.
+ * 3. Se agregó la función `updateDashboardContent` para manejar el cambio de informe por fecha.
+ * 4. **AJUSTE CRÍTICO:** El selector de fecha (historial) se movió al inicio
+ * de la pestaña "Día Preventivo" en la función `cargarDiaPreventivoTab`.
  */
 
 // --- Variables Globales ---
 // Obtenida del HTML (inyectada por server.js). Apunta a http://localhost:4000 en local o la URL de Render en producción.
-const ESTUDIOS_API_URL = window.ESTUDIOS_API_URL || 'http://localhost:4000'; 
+const ESTUDIOS_API_URL = window.ESTUDIOS_API_URL || 'http://localhost:4000';
 // API URL del servicio principal (llama al mismo servidor Node.js que sirve este HTML)
-const API_BASE_PATH = '/api'; 
+const API_BASE_PATH = '/api';
+
+// --- NUEVAS VARIABLES DE ESTADO ---
+// Variable para almacenar todos los informes históricos después de la búsqueda inicial
+let allReports = [];
+// Variable para almacenar los resultados de estudios complementarios (son estáticos por DNI)
+let cachedEstudiosResults = {};
+// ---------------------------------
+
 
 // ==============================================================================
 // 1. CONFIGURACIÓN INICIAL (DOMContentLoaded)
@@ -20,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnVerPortal) {
         btnVerPortal.addEventListener('click', async () => {
-            // 1. Solicitar DNI (punto de futura seguridad)
+            // 1. Solicitar DNI
             const { value: dni } = await Swal.fire({
                 title: 'Ingresa tu DNI',
                 input: 'text',
@@ -61,7 +74,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         throw new Error(dataResult.error || 'Error desconocido al buscar datos.');
                     }
 
-                    // --- INICIO DE NUEVA LÓGICA DE HISTORIAL ---
                     // 2.1. Adaptar la respuesta: asume que el servidor devuelve 'reports' (array) o 'persona' (objeto).
                     let reports = dataResult.reports;
 
@@ -75,70 +87,78 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
 
-                    let selectedReport = reports[0]; // Por defecto, el primero (asumiendo es el más reciente o el único)
+                    // 1. Función para ordenar por fecha (la más reciente primero)
+                    const sortedReports = [...reports].sort((a, b) => {
+                        const parseDate = (dateStr) => {
+                            const parts = dateStr.split('/');
+                            // Nota: Asume formato DD/MM/YYYY. Crea la fecha como YYYY-MM-DD para una comparación correcta.
+                            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+                        };
 
-                    // 2.2. Si hay más de un informe, mostrar el selector de fechas.
-                    if (reports.length > 1) {
-                        const reportSelection = await mostrarSelectorFechas(reports);
-                        if (!reportSelection) {
-                            Swal.close();
-                            return; // Usuario canceló la selección de fecha
-                        }
-                        selectedReport = reportSelection;
-                    }
-                    // --- FIN DE NUEVA LÓGICA DE HISTORIAL ---
+                        const dateA = parseDate(a.FECHAX || "01/01/1970"); // Usar fecha de fallback
+                        const dateB = parseDate(b.FECHAX || "01/01/1970");
+                        return dateB - dateA; // Orden descendente (más nuevo primero)
+                    });
 
-                    // 3. Datos encontrados con éxito. Iniciar análisis de IA y Estudios.
+                    // 2. Se selecciona automáticamente el informe más reciente
+                    const selectedReport = sortedReports[0];
+
+                    // ===============================================================
+                    //  *** ALMACENAMIENTO DE ESTADO GLOBAL ***
+                    // ===============================================================
+                    allReports = sortedReports;
+                    
                     const personaData = selectedReport; // El informe seleccionado se usa como persona
-                    
                     const dniToSearch = personaData.DNI;
-                    
-                    // LLAMADAS PARALELAS ESPECÍFICAS: MÁS EFICIENTE
+
+                    // LLAMADAS PARALELAS ESPECÍFICAS (IA ACTIVADA y Estudios, solo una vez)
                     const [
-                        resumenAI, 
-                        labResult, 
-                        mamografiaResult, 
-                        ecografiaResult, 
-                        ecomamariaResult, 
-                        espirometriaResult, 
-                        enfermeriaResult, 
-                        densitometriaResult, 
+                        resumenAI, // LA IA SIGUE AQUÍ, ACTIVA
+                        labResult,
+                        mamografiaResult,
+                        ecografiaResult,
+                        ecomamariaResult,
+                        espirometriaResult,
+                        enfermeriaResult,
+                        densitometriaResult,
                         vccResult,
-                        oftalmologiaResult, 
-                        odontologiaResult, 
-                        biopsiaResult 
+                        oftalmologiaResult,
+                        odontologiaResult,
+                        biopsiaResult
                     ] = await Promise.all([
-                        // OJO: Se pasa el informe seleccionado, no solo dataResult.persona
-                        obtenerResumenAI(personaData), 
-                        obtenerLinkEstudios(dniToSearch, 'laboratorio'), 
+                        obtenerResumenAI(personaData), // La función obtenerResumenAI es llamada
+                        obtenerLinkEstudios(dniToSearch, 'laboratorio'),
                         obtenerLinkEstudios(dniToSearch, 'mamografia'),
                         obtenerLinkEstudios(dniToSearch, 'ecografia'),
-                        obtenerLinkEstudios(dniToSearch, 'ecomamaria'), 
+                        obtenerLinkEstudios(dniToSearch, 'ecomamaria'),
                         obtenerLinkEstudios(dniToSearch, 'espirometria'),
                         obtenerLinkEstudios(dniToSearch, 'enfermeria'),
                         obtenerLinkEstudios(dniToSearch, 'densitometria'),
                         obtenerLinkEstudios(dniToSearch, 'vcc'),
-                        obtenerLinkEstudios(dniToSearch, 'oftalmologia'), 
-                        obtenerLinkEstudios(dniToSearch, 'odontologia'), 
-                        obtenerLinkEstudios(dniToSearch, 'biopsia') 
+                        obtenerLinkEstudios(dniToSearch, 'oftalmologia'),
+                        obtenerLinkEstudios(dniToSearch, 'odontologia'),
+                        obtenerLinkEstudios(dniToSearch, 'biopsia')
                     ]);
 
                     // 4. Cargar el Portal Personal de Salud (Nueva Vista)
                     const estudiosResults = {
-                        laboratorio: labResult, 
+                        laboratorio: labResult,
                         mamografia: mamografiaResult,
                         ecografia: ecografiaResult,
-                        ecomamaria: ecomamariaResult, 
+                        ecomamaria: ecomamariaResult,
                         espirometria: espirometriaResult,
                         enfermeria: enfermeriaResult,
                         densitometria: densitometriaResult,
                         vcc: vccResult,
-                        oftalmologia: oftalmologiaResult, 
-                        odontologia: odontologiaResult, 
-                        biopsia: biopsiaResult 
+                        oftalmologia: oftalmologiaResult,
+                        odontologia: odontologiaResult,
+                        biopsia: biopsiaResult
                     };
-                    cargarPortalPersonal(personaData, resumenAI, estudiosResults);
                     
+                    cachedEstudiosResults = estudiosResults; // Guardar resultados estáticos
+
+                    cargarPortalPersonal(personaData, resumenAI); // Usará allReports y cachedEstudiosResults
+
                     Swal.close(); // Cerrar el loading
 
                 } catch (error) {
@@ -150,81 +170,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-/**
- * Muestra un modal para que el usuario seleccione una fecha de Día Preventivo.
- * @param {Array<Object>} reports Lista de informes con el campo 'FECHAX' (Fecha de Día Preventivo).
- * @returns {Promise<Object | null>} El informe seleccionado o null si cancela.
- */
-async function mostrarSelectorFechas(reports) {
-    // 1. Clonar y ordenar los informes por fecha descendente (más reciente primero)
-    // Asume formato DD/MM/YYYY en FECHAX
-    const sortedReports = [...reports].sort((a, b) => {
-        // Convertir DD/MM/YYYY a un formato de fecha comparable (YYYY-MM-DD)
-        const parseDate = (dateStr) => {
-            const parts = dateStr.split('/');
-            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-        };
-
-        const dateA = parseDate(a.FECHAX); 
-        const dateB = parseDate(b.FECHAX);
-        return dateB - dateA; // Orden descendente (más nuevo primero)
-    });
-
-    // 2. Crear las opciones para el selector de SweetAlert
-    const inputOptions = sortedReports.reduce((acc, report, index) => {
-        const label = report.FECHAX + (index === 0 ? ' (Último)' : '');
-        // Usamos la FECHAX como clave y como valor visible
-        acc[report.FECHAX] = label; 
-        return acc;
-    }, {});
-    
-    // 3. Mostrar el modal de selección
-    const { value: selectedDate } = await Swal.fire({
-        title: 'Selecciona la fecha del Día Preventivo',
-        text: 'Hemos encontrado múltiples informes históricos. Por favor, elige la fecha del informe que deseas ver.',
-        input: 'select',
-        inputOptions: inputOptions,
-        inputPlaceholder: 'Selecciona una fecha',
-        showCancelButton: true,
-        confirmButtonText: 'Ver Informe',
-        cancelButtonText: 'Cancelar',
-        customClass: {
-            popup: 'swal2-popup w-full md:w-1/2 lg:w-1/3'
-        }
-    });
-
-    if (selectedDate) {
-        // 4. Buscar y devolver el objeto de informe completo que corresponde a la fecha seleccionada
-        return reports.find(r => r.FECHAX === selectedDate);
-    }
-    return null; // El usuario canceló
-}
-
-
 // ==============================================================================
 // 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO
 // ==============================================================================
 
 /**
- * Llama al servidor para obtener el resumen de IA.
+ * Llama al servidor para obtener el resumen de IA. (MANTENIDO ACTIVO)
  * @param {Object} persona Datos del paciente (el informe seleccionado).
  */
 async function obtenerResumenAI(persona) {
-    const response = await fetch('/api/analizar-informe', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(persona)
-    });
+    try {
+        const response = await fetch('/api/analizar-informe', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ persona: persona })
+        });
 
-    if (!response.ok) {
-        throw new Error('Fallo al obtener el resumen de IA.');
+        const result = await response.json();
+
+        if (response.ok && result.resumen) {
+            return result.resumen;
+        } else {
+            console.error('Error al generar resumen AI:', result.error);
+            return `ERROR del servidor: La IA no pudo generar el resumen. ${result.error || 'Verifica la conexión.'}`;
+        }
+    } catch (error) {
+        console.error('Fallo de red al llamar a la IA:', error);
+        return 'ERROR CRÍTICO DE GEMINI: Fallo de red o tiempo de espera agotado al contactar la IA.';
     }
-
-    const data = await response.json();
-    return data.resumen;
 }
+
 
 /**
  * Llama al microservicio de Estudios Complementarios (puerto 4000) para un 
@@ -278,7 +255,7 @@ function getRiskLevel(key, value) {
     if (['edad', 'sexo', 'profesional', 'fechax', 'dni'].includes(k)) {
         return { color: 'gray', icon: 'info', text: 'Informativo' };
     }
-    
+
     // 1. Reglas de CALMA (Verde) - Ausencia de Riesgo (Prioridad Alta)
     if (v.includes('no presenta') || 
         v.includes('normal') || 
@@ -297,7 +274,7 @@ function getRiskLevel(key, value) {
         v.includes('negativo')) {
         return { color: 'green', icon: 'check', text: 'Calma' };
     }
-    
+
     // 2. Reglas universales de ALERTA (Rojo)
     // Se ejecuta si NO pasó la regla Verde, buscando presencia de riesgo.
     if (v.includes('sí presenta') || 
@@ -317,7 +294,7 @@ function getRiskLevel(key, value) {
         ) {
         return { color: 'red', icon: 'times', text: 'Alerta' };
     }
-    
+
     // 3. Reglas específicas o de ATENCIÓN (Amarillo)
     if (k.includes('imc') && (v.includes('sobrepeso') || v.includes('bajo peso'))) {
         return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
@@ -334,29 +311,30 @@ function getRiskLevel(key, value) {
     if (v.length > 0) {
         return { color: 'gray', icon: 'question', text: 'Sin Dato' };
     }
-    
+
     // Si el valor está vacío o no mapeado
     return { color: 'gray', icon: 'question', text: 'Sin Dato' };
 }
+
+
 // ==============================================================================
 // 3. FUNCIONES DEL PORTAL PERSONAL DE SALUD (Dashboard y Pestañas)
 // ==============================================================================
 
 /**
  * Carga el Portal Personal de Salud y configura la navegación.
- * @param {Object} persona Datos del paciente (el informe seleccionado).
- * @param {string} resumenAI Resumen generado por la IA.
- * @param {Object} estudiosResults Objeto con los resultados de estudios específicos.
+ * @param {Object} persona Datos del paciente (el informe seleccionado, el más reciente por defecto).
+ * @param {string} resumenAI Resumen generado por la IA para ese informe.
  */
-function cargarPortalPersonal(persona, resumenAI, estudiosResults) {
+function cargarPortalPersonal(persona, resumenAI) {
     // 1. Ocultar la vista inicial y mostrar el portal
     document.getElementById('vista-inicial').style.display = 'none';
     document.getElementById('portal-salud-container').style.display = 'block';
 
     // 2. Cargar el contenido de las pestañas
-    cargarDiaPreventivoTab(persona, resumenAI);
-    // *** AHORA PASAMOS TODOS LOS RESULTADOS DE ESTUDIOS (Lab y Mamografia) ***
-    cargarEstudiosTab(estudiosResults); 
+    // La pestaña de Estudios no cambia al cambiar la fecha del informe, usa los datos cacheados.
+    cargarDiaPreventivoTab(persona, resumenAI); 
+    cargarEstudiosTab(cachedEstudiosResults); 
     // cargarOtrosServiciosTab(); // Función pendiente
 
     // 3. Construir la navegación (Botones)
@@ -419,7 +397,7 @@ function mostrarPestana(tabId) {
 /**
  * Genera el contenido para la pestaña Día Preventivo (Dashboard Visual + Botones de IA).
  * @param {Object} persona Datos del paciente (el informe seleccionado).
- * @param {string} resumenAI Resumen generado por la IA (puede contener un error).
+ * @param {string} resumenAI Resumen generado por la IA.
  */
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
@@ -433,11 +411,12 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     let summaryContent;
 
     if (!resumenAI || resumenAI.includes("ERROR CRÍTICO DE GEMINI") || resumenAI.includes("ERROR del servidor")) {
+        // Mensaje si la IA falló, pero NO por desactivación
         summaryContent = `
             <div class="p-4 bg-red-100 border-l-4 border-red-500 rounded-lg shadow-sm">
-                <strong class="text-red-700">🚨 Error Temporal de Análisis:</strong> 
-                El servicio de Inteligencia Artificial (IA) para generar el resumen está temporalmente sobrecargado o no pudo procesar la solicitud. 
-                <br>Por favor, revisa el detalle de indicadores a continuación, e intenta acceder al resumen escrito más tarde.
+                <strong class="text-red-700">❌ Error en el Resumen de IA:</strong> 
+                Hubo un problema al contactar o procesar la respuesta de la Inteligencia Artificial.
+                <br>Por favor, revisa el detalle de indicadores a continuación y contacta soporte si el problema persiste.
             </div>
         `;
     } else {
@@ -445,11 +424,49 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     }
     // ------------------------------------------
 
+    // 0. DROPDOWN DE SELECCIÓN DE FECHA (Si hay múltiples informes)
+    let dateSelectorHTML = '';
+    if (allReports.length > 1) {
+        // Usamos allReports que ya está ordenado
+        const dateOptions = allReports.map(report => {
+            const date = report.FECHAX;
+            // Usamos FECHAX o un ID como valor, ya que es lo que identifica el registro en allReports
+            const id = report.ID || date; 
+            return { date, id };
+        });
+
+        const optionsHtml = dateOptions.map(opt => `
+            <option value="${opt.id}" ${opt.date === fechaInforme ? 'selected' : ''}>
+                Día Preventivo del ${opt.date} ${opt.date === fechaInforme ? ' (Actual)' : ''}
+            </option>
+        `).join('');
+
+        // *** BLOQUE MOVIDO PARA SER INSERTADO ANTES DEL DASHBOARD-CONTENIDO ***
+        dateSelectorHTML = `
+            <div class="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg shadow-md">
+                <label for="report-date-selector" class="block text-md font-bold text-yellow-800 mb-2">
+                    <i class="fas fa-history mr-2"></i> 
+                    Historial de Informes Previos (${allReports.length} encontrados)
+                </label>
+                <select id="report-date-selector" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-yellow-500 focus:border-yellow-500 sm:text-sm rounded-md shadow-inner transition duration-150">
+                    ${optionsHtml}
+                </select>
+            </div>
+        `;
+    }
+
     // 1. Construir el HTML del dashboard (Resultado a Resultado)
     let dashboardHTML = `
-        <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-lg shadow-sm">
+        <h1 class="text-2xl font-bold mb-6 text-gray-800">
+            <i class="fas fa-heartbeat mr-2 text-blue-600"></i> Mis resultados del Día Preventivo
+        </h1>
+        
+        <!-- INSERCIÓN DEL SELECTOR DE FECHA AQUÍ (MOVIDO) -->
+        ${dateSelectorHTML}
+
+        <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-lg shadow-sm" id="informe-general-container">
             <p class="font-semibold text-blue-700">
-                <i class="fas fa-calendar-alt mr-2"></i> Fecha del Informe de Día Preventivo: 
+                <i class="fas fa-calendar-alt mr-2"></i> Fecha del Informe Activo: 
                 <span class="font-bold text-blue-900">${fechaInforme}</span>
             </p>
         </div>
@@ -469,12 +486,12 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional'].includes(key)) {
             continue; 
         }
-        
+
         const safeValue = String(value || ''); 
         if (safeValue.trim() === '') continue; // Ignorar campos vacíos
 
         const risk = getRiskLevel(key, safeValue);
-        
+
         // Mapeo de colores Tailwind CSS
         const colorMap = {
             red: 'bg-red-100 border-red-500 text-red-700',
@@ -510,8 +527,19 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
 
     // 2. Inyectar el HTML del Dashboard
     dashboardContenedor.innerHTML = dashboardHTML;
+    
+    // 3. Configurar Listener del Dropdown (SOLO SI EXISTE)
+    if (allReports.length > 1) {
+        // El listener debe agregarse DESPUÉS de inyectar el HTML en el DOM
+        document.getElementById('report-date-selector').addEventListener('change', async (event) => {
+            const selectedId = event.target.value;
+            // Llamar a la función principal de actualización
+            await updateDashboardContent(selectedId); 
+        });
+    }
 
-    // 3. Contacto Directo del Programa Día Preventivo (Ajustado)
+
+    // 4. Contacto Directo del Programa Día Preventivo (Ajustado)
     let accionesHTML = `
         <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
             <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
@@ -531,22 +559,64 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
             </button>
-            
+
             <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-share-alt mr-2"></i> Compartir Portal
             </button>
         </div>
     `;
 
-    // 4. Inyectar el HTML de Acciones y Contacto
+    // 5. Inyectar el HTML de Acciones y Contacto
     accionesContenedor.innerHTML = accionesHTML;
 }
 
+
+/**
+ * Actualiza el contenido del dashboard del Día Preventivo al seleccionar
+ * una fecha diferente del historial en el dropdown.
+ * @param {string} reportId El ID (o FECHAX como fallback) del informe a mostrar.
+ */
+async function updateDashboardContent(reportId) {
+    // Buscar el informe seleccionado en la lista global
+    const newReport = allReports.find(r => (r.ID || r.FECHAX) === reportId);
+
+    if (!newReport) {
+        Swal.fire('Error', 'No se encontró el informe para la fecha seleccionada.', 'error');
+        return;
+    }
+
+    Swal.fire({
+        title: 'Cargando informe anterior...',
+        text: `Recuperando datos del ${newReport.FECHAX} y re-generando análisis de IA.`,
+        allowOutsideClick: false,
+        didOpen: () => {
+            Swal.showLoading();
+        }
+    });
+
+    try {
+        // 1. Generar nuevo resumen de IA para el informe seleccionado
+        const resumenAI = await obtenerResumenAI(newReport);
+        
+        // 2. Actualizar el contenido de la pestaña Día Preventivo con el nuevo informe
+        cargarDiaPreventivoTab(newReport, resumenAI);
+        
+        // 3. Asegurar que la pestaña activa sea la del Día Preventivo
+        mostrarPestana('tab-dia-preventivo'); 
+        
+        Swal.close();
+        window.scrollTo(0, 0); // Mover al inicio para ver el cambio
+
+    } catch (error) {
+        console.error('Error al actualizar el informe histórico:', error);
+        Swal.fire('Error', 'Hubo un problema al cargar el informe histórico.', 'error');
+    }
+}
+
+
 /**
  * Genera el contenido estático/dinámico de la pestaña Estudios Complementarios.
- * **CORRECCIÓN:** Ahora recibe un objeto {laboratorio: result, mamografia: result}
- * y mapea las claves de los resultados con las claves en la lista de estudios.
- * @param {Object} estudiosResults Objeto con los resultados de estudios específicos (ej. {laboratorio: {...}, mamografia: {...}}).
+ * @param {Object} estudiosResults Objeto con los resultados de estudios específicos.
  */
 function cargarEstudiosTab(estudiosResults) {
     const contenedor = document.getElementById('estudios-complementarios-lista');
@@ -568,12 +638,12 @@ function cargarEstudiosTab(estudiosResults) {
     ];
 
     let html = '';
-    
-    // **NUEVA LÓGICA DE PROCESAMIENTO MULTIPLE**
+
+    // **LÓGICA DE PROCESAMIENTO MULTIPLE**
     estudiosMaestros.forEach(estudio => {
         // Busca el resultado en el objeto que pasamos (estudiosResults) usando la clave ('laboratorio', 'mamografia', etc.)
         const result = estudiosResults[estudio.key];
-        
+
         // 1. Determinar si hay un link disponible
         const isAvailable = result && result.link;
         const link = isAvailable ? result.link : 'javascript:void(0)';
@@ -584,11 +654,11 @@ function cargarEstudiosTab(estudiosResults) {
             ? 'border-green-500 hover:border-green-700 bg-green-50 hover:bg-green-100'
             : 'border-purple-500 opacity-70 cursor-default';
         const iconClasses = isAvailable ? 'text-green-600' : 'text-purple-600';
-        
+
         // 3. Manejador de click: Si no está disponible, muestra el error de la búsqueda o un mensaje genérico
         const defaultErrorMessage = 'Este estudio no tiene resultados cargados todavía.';
         const errorMessage = result && result.error ? `Error en la búsqueda: ${result.error}` : defaultErrorMessage;
-        
+
         const onClickHandler = isAvailable 
             ? '' 
             : `onclick="Swal.fire('Aún No Disponible', '${errorMessage.replace(/'/g, "\\'")}', 'info')"`;
@@ -621,46 +691,138 @@ function mostrarInformeEscrito(nombre, resumenAI) {
     // Nota del programa Día Preventivo
     const contactoHtml = `
         <p class="mt-6 text-sm text-gray-700 border-t pt-4 italic">
-            Si desea mayor precisión sobre los resultados o hablar con un profesional del programa no dude en conectarse al te: 3424071702 o al mail diapreventivoiapos@diapreventivo.com
+            Si desea mayor precisión sobre los resultados o hablar con un profesional del programa, no dude en conectarse a estos medios.
         </p>
+        <div class="mt-2 text-sm">
+            <p><span class="font-semibold">Teléfono:</span> 342 407-1702</p>
+            <p><span class="font-semibold">Mail:</span> diapreventivoiapos@diapreventivo.com</p>
+        </div>
     `;
 
+    // Contenido del modal que se desea imprimir
+    const printableContent = `
+        <div class="p-6">
+            <h1 class="text-2xl font-bold mb-4 text-blue-800 border-b pb-2">Informe de Salud Generado por IA</h1>
+            <p class="mb-4 text-lg font-semibold">Paciente: ${nombre}</p>
+            <div class="prose max-w-none p-4 bg-gray-50 rounded-lg border leading-relaxed">
+                ${resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}
+            </div>
+            ${contactoHtml}
+        </div>
+    `;
+
+    // Mostrar el modal
     Swal.fire({
-        title: `Informe Escrito AI de ${nombre}`,
-        // Contenido con el resumen de la IA más la nota de contacto
-        html: `<div class="text-left p-4 leading-relaxed">${resumenAI}${contactoHtml}</div>`, 
-        icon: 'info',
-        confirmButtonText: 'Cerrar',
+        title: 'Informe Escrito de la Inteligencia Artificial',
+        html: `
+            <div id="modal-informe-ai" class="text-left">${printableContent}</div>
+        `,
+        width: '80%',
+        showCancelButton: true,
+        confirmButtonText: '<i class="fas fa-print"></i> Imprimir Informe',
+        cancelButtonText: 'Cerrar',
         customClass: {
-            popup: 'swal2-popup w-full md:w-3/4 lg:w-4/5',
+            container: 'z-50', // Asegura que esté por encima de otros elementos
+            popup: 'shadow-2xl'
         },
-        // Botón para imprimir
-        showDenyButton: true,
-        denyButtonText: '<i class="fas fa-print"></i> Imprimir Informe',
-        preDeny: () => {
-             // Imprime solo el contenido del modal de SweetAlert2
-            window.print();
-             return false; // Evita que el modal se cierre inmediatamente después de imprimir
+        focusConfirm: false,
+        preConfirm: () => {
+            // Acción de Imprimir
+            imprimirContenido('modal-informe-ai', `Informe AI - ${nombre}`);
+            return false; // Evita que el modal se cierre automáticamente después de la acción
+        }
+    });
+}
+
+
+/**
+ * Inicia la impresión de un elemento específico.
+ * Crea una ventana de impresión con el HTML de un elemento dado.
+ * @param {string} elementId ID del elemento a imprimir.
+ * @param {string} title Título para la ventana de impresión.
+ */
+function imprimirContenido(elementId, title) {
+    const printContent = document.getElementById(elementId).innerHTML;
+    const originalContent = document.body.innerHTML;
+
+    // Crear contenido de impresión con estilos básicos para el informe
+    const printWindow = window.open('', '_blank', 'height=600,width=800');
+    printWindow.document.write('<html><head><title>' + title + '</title>');
+    // Incluir Tailwind CDN para mantener los estilos básicos de las clases
+    printWindow.document.write('<script src="https://cdn.tailwindcss.com"></script>');
+    // Incluir Font Awesome
+    printWindow.document.write('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">');
+    printWindow.document.write('</head><body class="p-10">');
+    printWindow.document.write('<div class="prose max-w-none">' + printContent + '</div>');
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    
+    // Esperar un momento para que Tailwind se cargue y aplique los estilos antes de imprimir
+    setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+        // No cerramos la ventana automáticamente; el usuario puede hacerlo.
+        // printWindow.close();
+    }, 500); // 500ms de espera
+}
+
+/**
+ * Función genérica para compartir el dashboard.
+ */
+function compartirDashboard() {
+    // Idealmente, se usaría la API Navigator.share, pero requiere HTTPS y es para apps nativas.
+    // Usamos un modal informativo de cómo compartir.
+    Swal.fire({
+        title: 'Compartir Portal de Salud',
+        html: `
+            <p class="text-gray-700 mb-4">Para compartir tu informe con un profesional, puedes copiar y enviar el enlace de esta página o utilizar la función de impresión para generar un PDF.</p>
+            <div class="flex flex-col space-y-3">
+                <button onclick="copyCurrentUrl()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                    <i class="fas fa-link mr-2"></i> Copiar Enlace del Portal
+                </button>
+                <button onclick="Swal.close(); mostrarInformeEscrito('${document.querySelector('#portal-salud-container h1')?.textContent || 'Afiliado'}', \`${document.querySelector('.prose')?.innerHTML || 'No disponible'}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                    <i class="fas fa-file-pdf mr-2"></i> Generar PDF (a través de Imprimir)
+                </button>
+            </div>
+        `,
+        showConfirmButton: false,
+        showCloseButton: true,
+        customClass: {
+            container: 'z-50'
         }
     });
 }
 
 /**
- * Función auxiliar para compartir el enlace del portal.
+ * Copia la URL actual al portapapeles.
  */
-function compartirDashboard() {
-    const shareText = `¡Ingresa para ver el informe del Dia Preventivo IAPOS! Revisa tu portal aquí: ${window.location.href}`;
-    // Usar document.execCommand('copy') como fallback seguro para entornos iframe
+function copyCurrentUrl() {
+    // Usar execCommand ya que navigator.clipboard puede fallar en entornos iframe
+    const el = document.createElement('textarea');
+    el.value = window.location.href;
+    document.body.appendChild(el);
+    el.select();
     try {
-        const tempTextArea = document.createElement('textarea');
-        tempTextArea.value = shareText;
-        document.body.appendChild(tempTextArea);
-        tempTextArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(tempTextArea);
-        Swal.fire('¡Copiado!', 'El enlace al portal ha sido copiado al portapapeles.', 'success');
+        const successful = document.execCommand('copy');
+        if (successful) {
+            Swal.fire({
+                icon: 'success',
+                title: '¡Enlace Copiado!',
+                text: 'El enlace de esta página se ha copiado a tu portapapeles.',
+                showConfirmButton: false,
+                timer: 1500
+            });
+        } else {
+            throw new Error('Fallback copy failed.');
+        }
     } catch (err) {
-        console.error('Fallo al copiar:', err);
-        Swal.fire('Error', 'No se pudo copiar el enlace automáticamente. Por favor, cópialo manualmente.', 'error');
+        Swal.fire({
+            icon: 'error',
+            title: 'Error al Copiar',
+            text: 'Por favor, copia la URL manualmente: ' + window.location.href,
+            showConfirmButton: true
+        });
+    } finally {
+        document.body.removeChild(el);
     }
 }
