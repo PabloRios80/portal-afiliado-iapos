@@ -3,6 +3,7 @@
  * Maneja la interacción con la hoja de cálculo de Google Sheets (a través del servidor)
  * y la llamada a la API de Gemini para el análisis de informes.
  * * NOTA: La búsqueda de Estudios Complementarios se realiza a un microservicio separado en el puerto 4000.
+ * * MODIFICACIONES: Implementación de la funcionalidad de historial de fechas
  */
 
 // --- Variables Globales ---
@@ -60,60 +61,83 @@ document.addEventListener('DOMContentLoaded', () => {
                         throw new Error(dataResult.error || 'Error desconocido al buscar datos.');
                     }
 
-                    if (!dataResult.persona) {
-                        Swal.fire('No Encontrado', 'No se encontraron resultados para el DNI ingresado.', 'error');
-                        return;
+                    // --- INICIO DE NUEVA LÓGICA DE HISTORIAL ---
+                    // 2.1. Adaptar la respuesta: asume que el servidor devuelve 'reports' (array) o 'persona' (objeto).
+                    let reports = dataResult.reports;
+
+                    if (!reports || reports.length === 0) {
+                        if (dataResult.persona) {
+                            // Si solo viene un resultado (viejo formato), lo convertimos en un array de un elemento
+                            reports = [dataResult.persona];
+                        } else {
+                            Swal.fire('No Encontrado', 'No se encontraron resultados para el DNI ingresado.', 'error');
+                            return;
+                        }
                     }
 
+                    let selectedReport = reports[0]; // Por defecto, el primero (asumiendo es el más reciente o el único)
+
+                    // 2.2. Si hay más de un informe, mostrar el selector de fechas.
+                    if (reports.length > 1) {
+                        const reportSelection = await mostrarSelectorFechas(reports);
+                        if (!reportSelection) {
+                            Swal.close();
+                            return; // Usuario canceló la selección de fecha
+                        }
+                        selectedReport = reportSelection;
+                    }
+                    // --- FIN DE NUEVA LÓGICA DE HISTORIAL ---
+
                     // 3. Datos encontrados con éxito. Iniciar análisis de IA y Estudios.
+                    const personaData = selectedReport; // El informe seleccionado se usa como persona
+                    
+                    const dniToSearch = personaData.DNI;
                     
                     // LLAMADAS PARALELAS ESPECÍFICAS: MÁS EFICIENTE
-                    const dniToSearch = dataResult.persona.DNI;
-                    // AÑADIDOS: ecomamaria, oftalmologia, odontologia, biopsia
                     const [
                         resumenAI, 
                         labResult, 
                         mamografiaResult, 
                         ecografiaResult, 
-                        ecomamariaResult, // <-- NUEVO: Eco mamaria
+                        ecomamariaResult, 
                         espirometriaResult, 
                         enfermeriaResult, 
                         densitometriaResult, 
                         vccResult,
-                        oftalmologiaResult, // <-- NUEVO: Oftalmología
-                        odontologiaResult,  // <-- NUEVO: Odontología
-                        biopsiaResult       // <-- NUEVO: Biopsia
+                        oftalmologiaResult, 
+                        odontologiaResult, 
+                        biopsiaResult 
                     ] = await Promise.all([
-                        obtenerResumenAI(dataResult.persona), 
+                        // OJO: Se pasa el informe seleccionado, no solo dataResult.persona
+                        obtenerResumenAI(personaData), 
                         obtenerLinkEstudios(dniToSearch, 'laboratorio'), 
                         obtenerLinkEstudios(dniToSearch, 'mamografia'),
                         obtenerLinkEstudios(dniToSearch, 'ecografia'),
-                        obtenerLinkEstudios(dniToSearch, 'ecomamaria'), // <-- Llamada Eco Mamaria
+                        obtenerLinkEstudios(dniToSearch, 'ecomamaria'), 
                         obtenerLinkEstudios(dniToSearch, 'espirometria'),
                         obtenerLinkEstudios(dniToSearch, 'enfermeria'),
                         obtenerLinkEstudios(dniToSearch, 'densitometria'),
                         obtenerLinkEstudios(dniToSearch, 'vcc'),
-                        obtenerLinkEstudios(dniToSearch, 'oftalmologia'), // <-- Llamada Oftalmología
-                        obtenerLinkEstudios(dniToSearch, 'odontologia'),  // <-- Llamada Odontología
-                        obtenerLinkEstudios(dniToSearch, 'biopsia')       // <-- Llamada Biopsia
+                        obtenerLinkEstudios(dniToSearch, 'oftalmologia'), 
+                        obtenerLinkEstudios(dniToSearch, 'odontologia'), 
+                        obtenerLinkEstudios(dniToSearch, 'biopsia') 
                     ]);
 
                     // 4. Cargar el Portal Personal de Salud (Nueva Vista)
-                    // Pasamos TODOS los resultados de los estudios como un objeto
                     const estudiosResults = {
                         laboratorio: labResult, 
                         mamografia: mamografiaResult,
                         ecografia: ecografiaResult,
-                        ecomamaria: ecomamariaResult, // <-- Resultado Eco Mamaria
+                        ecomamaria: ecomamariaResult, 
                         espirometria: espirometriaResult,
                         enfermeria: enfermeriaResult,
                         densitometria: densitometriaResult,
                         vcc: vccResult,
-                        oftalmologia: oftalmologiaResult, // <-- Resultado Oftalmología
-                        odontologia: odontologiaResult,  // <-- Resultado Odontología
-                        biopsia: biopsiaResult           // <-- Resultado Biopsia
+                        oftalmologia: oftalmologiaResult, 
+                        odontologia: odontologiaResult, 
+                        biopsia: biopsiaResult 
                     };
-                    cargarPortalPersonal(dataResult.persona, resumenAI, estudiosResults);
+                    cargarPortalPersonal(personaData, resumenAI, estudiosResults);
                     
                     Swal.close(); // Cerrar el loading
 
@@ -126,13 +150,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+/**
+ * Muestra un modal para que el usuario seleccione una fecha de Día Preventivo.
+ * @param {Array<Object>} reports Lista de informes con el campo 'FECHAX' (Fecha de Día Preventivo).
+ * @returns {Promise<Object | null>} El informe seleccionado o null si cancela.
+ */
+async function mostrarSelectorFechas(reports) {
+    // 1. Clonar y ordenar los informes por fecha descendente (más reciente primero)
+    // Asume formato DD/MM/YYYY en FECHAX
+    const sortedReports = [...reports].sort((a, b) => {
+        // Convertir DD/MM/YYYY a un formato de fecha comparable (YYYY-MM-DD)
+        const parseDate = (dateStr) => {
+            const parts = dateStr.split('/');
+            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+        };
+
+        const dateA = parseDate(a.FECHAX); 
+        const dateB = parseDate(b.FECHAX);
+        return dateB - dateA; // Orden descendente (más nuevo primero)
+    });
+
+    // 2. Crear las opciones para el selector de SweetAlert
+    const inputOptions = sortedReports.reduce((acc, report, index) => {
+        const label = report.FECHAX + (index === 0 ? ' (Último)' : '');
+        // Usamos la FECHAX como clave y como valor visible
+        acc[report.FECHAX] = label; 
+        return acc;
+    }, {});
+    
+    // 3. Mostrar el modal de selección
+    const { value: selectedDate } = await Swal.fire({
+        title: 'Selecciona la fecha del Día Preventivo',
+        text: 'Hemos encontrado múltiples informes históricos. Por favor, elige la fecha del informe que deseas ver.',
+        input: 'select',
+        inputOptions: inputOptions,
+        inputPlaceholder: 'Selecciona una fecha',
+        showCancelButton: true,
+        confirmButtonText: 'Ver Informe',
+        cancelButtonText: 'Cancelar',
+        customClass: {
+            popup: 'swal2-popup w-full md:w-1/2 lg:w-1/3'
+        }
+    });
+
+    if (selectedDate) {
+        // 4. Buscar y devolver el objeto de informe completo que corresponde a la fecha seleccionada
+        return reports.find(r => r.FECHAX === selectedDate);
+    }
+    return null; // El usuario canceló
+}
+
+
 // ==============================================================================
 // 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO
 // ==============================================================================
 
 /**
  * Llama al servidor para obtener el resumen de IA.
- * @param {Object} persona Datos del paciente.
+ * @param {Object} persona Datos del paciente (el informe seleccionado).
  */
 async function obtenerResumenAI(persona) {
     const response = await fetch('/api/analizar-informe', {
@@ -216,7 +291,7 @@ function getRiskLevel(key, value) {
         v.includes('no aplica') || // No Aplica
         v.includes('bajo') || 
         v.includes('realiza') ||
-        v.includes('Completo') || // Inmunizaciones 
+        v.includes('completo') || // Inmunizaciones 
         v.includes('sí') ||
         v.includes('riesgo bajo') || 
         v.includes('negativo')) {
@@ -231,7 +306,7 @@ function getRiskLevel(key, value) {
         v.includes('anormal') || 
         v.includes('alto') || 
         v.includes('no control') || 
-        v.includes('No realiza') || 
+        v.includes('no realiza') || 
         v.includes('pendiente') || 
         v.includes('riesgo alto') || 
         v.includes('positivo') ||
@@ -269,7 +344,7 @@ function getRiskLevel(key, value) {
 
 /**
  * Carga el Portal Personal de Salud y configura la navegación.
- * @param {Object} persona Datos del paciente.
+ * @param {Object} persona Datos del paciente (el informe seleccionado).
  * @param {string} resumenAI Resumen generado por la IA.
  * @param {Object} estudiosResults Objeto con los resultados de estudios específicos.
  */
@@ -343,12 +418,13 @@ function mostrarPestana(tabId) {
 
 /**
  * Genera el contenido para la pestaña Día Preventivo (Dashboard Visual + Botones de IA).
- * @param {Object} persona Datos del paciente.
+ * @param {Object} persona Datos del paciente (el informe seleccionado).
  * @param {string} resumenAI Resumen generado por la IA (puede contener un error).
  */
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
     const dni = persona['DNI'] || 'N/A';
+    const fechaInforme = persona['FECHAX'] || 'N/A'; // Obtener la fecha del informe seleccionado
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
 
@@ -371,6 +447,12 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
 
     // 1. Construir el HTML del dashboard (Resultado a Resultado)
     let dashboardHTML = `
+        <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-lg shadow-sm">
+            <p class="font-semibold text-blue-700">
+                <i class="fas fa-calendar-alt mr-2"></i> Fecha del Informe de Día Preventivo: 
+                <span class="font-bold text-blue-900">${fechaInforme}</span>
+            </p>
+        </div>
         <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
             <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Tu Resumen de Salud (Generado por IA)</h2>
             <div class="prose max-w-none p-4 bg-gray-50 mb-6 rounded-lg border">
@@ -405,6 +487,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             exclamation: 'fas fa-exclamation-triangle',
             check: 'fas fa-check-circle',
             question: 'fas fa-question-circle',
+            info: 'fas fa-info-circle',
         };
 
         dashboardHTML += `
@@ -477,8 +560,9 @@ function cargarEstudiosTab(estudiosResults) {
         { nombre: 'Enfermería', icon: 'fas fa-user-nurse', key: 'enfermeria' },
         { nombre: 'Densitometría', icon: 'fas fa-bone', key: 'densitometria' },
         { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', key: 'vcc' },
-        { nombre: 'Odontología', icon: 'fas fa-tooth', key: 'odontologia' }, // ¡AÑADIDO!
-        { nombre: 'Biopsia', icon: 'fas fa-microscope', key: 'biopsia' }, // ¡AÑADIDO!
+        { nombre: 'Eco mamaria', icon: 'fas fa-ultrasound', key: 'ecomamaria' },
+        { nombre: 'Odontología', icon: 'fas fa-tooth', key: 'odontologia' }, 
+        { nombre: 'Biopsia', icon: 'fas fa-microscope', key: 'biopsia' }, 
         { nombre: 'Oftalmología', icon: 'fas fa-eye', key: 'oftalmologia' },
         { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', key: 'otros' },
     ];
