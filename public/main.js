@@ -1,4 +1,4 @@
-/**
+/*
  * Script de Lógica Principal del Portal de Afiliados
  * Maneja la interacción con la hoja de cálculo de Google Sheets (a través del servidor)
  * y la llamada a la API de Gemini para el análisis de informes.
@@ -7,8 +7,8 @@
  * 1. Implementación de un selector de fecha dentro de la pestaña "Día Preventivo".
  * 2. Se almacena el historial completo de informes en la variable global `allReports`.
  * 3. Se agregó la función `updateDashboardContent` para manejar el cambio de informe por fecha.
- * 4. **AJUSTE CRÍTICO:** El selector de fecha (historial) se movió al inicio
- * de la pestaña "Día Preventivo" en la función `cargarDiaPreventivoTab`.
+ * 4. El selector de fecha (historial) se movió al inicio de la pestaña "Día Preventivo".
+ * 5. Se agregó la fecha del último estudio complementario cargado en la tarjeta de la pestaña Estudios Complementarios.
  */
 
 // --- Variables Globales ---
@@ -104,7 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const selectedReport = sortedReports[0];
 
                     // ===============================================================
-                    //  *** ALMACENAMIENTO DE ESTADO GLOBAL ***
+                    // 	*** ALMACENAMIENTO DE ESTADO GLOBAL ***
                     // ===============================================================
                     allReports = sortedReports;
                     
@@ -112,6 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const dniToSearch = personaData.DNI;
 
                     // LLAMADAS PARALELAS ESPECÍFICAS (IA ACTIVADA y Estudios, solo una vez)
+                    // NOTA: obtenerLinkEstudios ahora debe devolver { link: ..., fechaResultado: ... }
                     const [
                         resumenAI, // LA IA SIGUE AQUÍ, ACTIVA
                         labResult,
@@ -206,9 +207,10 @@ async function obtenerResumenAI(persona) {
 /**
  * Llama al microservicio de Estudios Complementarios (puerto 4000) para un 
  * estudio ESPECÍFICO (ej. 'laboratorio' o 'mamografia').
- * @param {string} dni El DNI del paciente.
+ * Se asume que el microservicio devuelve el resultado más reciente y su fecha.
+ * * @param {string} dni El DNI del paciente.
  * @param {string} studyType El tipo de estudio a buscar ('laboratorio', 'mamografia').
- * @returns {Promise<Object>} El enlace del estudio o un objeto de error.
+ * @returns {Promise<Object>} El enlace, la fecha del último resultado o un objeto de error.
  */
 async function obtenerLinkEstudios(dni, studyType) {
     // La URL ahora incluye el parámetro 'tipo'
@@ -220,12 +222,19 @@ async function obtenerLinkEstudios(dni, studyType) {
 
         // El microservicio ahora devuelve 404 si el DNI o el link no se encontraron.
         if (response.status === 404) {
-            return { link: null, error: data.error, tipo: studyType };
+            // Error de No Encontrado o sin resultados
+            return { link: null, error: data.error, tipo: studyType, fechaResultado: null };
         }
 
         if (response.ok && data.link) {
-            // Éxito: link encontrado
-            return { link: data.link, tipo: studyType, mensaje: data.mensaje };
+            // Éxito: link encontrado. Se asume que 'data' ahora incluye 'fechaResultado' (DD/MM/YYYY)
+            // Si el servidor no lo provee, 'fechaResultado' será undefined y se tratará como null.
+            return { 
+                link: data.link, 
+                tipo: studyType, 
+                mensaje: data.mensaje,
+                fechaResultado: data.fechaResultado || null // Asumimos que el servidor lo provee
+            };
         } else {
              // Esto captura si el microservicio devuelve 500 o si la respuesta no es .ok
             const errorMessage = data.error || `Error del microservicio de Estudios (${response.status} - ${studyType})`;
@@ -237,11 +246,11 @@ async function obtenerLinkEstudios(dni, studyType) {
         return { 
             link: null, 
             error: `El servicio de Estudios Complementarios falló o no está disponible para ${studyType}.`,
-            tipo: studyType
+            tipo: studyType,
+            fechaResultado: null
         };
     }
 }
-
 
 /**
  * Mapea un valor de columna a un nivel de riesgo (color/ícono).
@@ -647,7 +656,13 @@ function cargarEstudiosTab(estudiosResults) {
         // 1. Determinar si hay un link disponible
         const isAvailable = result && result.link;
         const link = isAvailable ? result.link : 'javascript:void(0)';
-        const statusText = isAvailable ? 'VER RESULTADO' : 'PENDIENTE';
+        
+        // --- CAMBIO CLAVE: Determinar el texto de estado y la fecha ---
+        const lastResultDate = result && result.fechaResultado ? result.fechaResultado : 'Sin fecha';
+        const statusText = isAvailable 
+            ? `<span class="font-bold">VER RESULTADO</span> (último: ${lastResultDate})` 
+            : 'PENDIENTE o Sin Resultados Cargados';
+        // -----------------------------------------------------------
 
         // 2. Clases dinámicas: verde si disponible, morado por defecto si pendiente
         const linkClasses = isAvailable 
@@ -667,9 +682,12 @@ function cargarEstudiosTab(estudiosResults) {
             <a href="${link}" ${isAvailable ? 'target="_blank" rel="noopener noreferrer"' : ''} ${onClickHandler}
                 class="flex items-center p-4 bg-white rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 ${linkClasses}">
                 <i class="${estudio.icon} ${iconClasses} text-2xl mr-4"></i>
-                <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
-                <span class="ml-auto text-sm font-medium ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-400'}">
-                    ${statusText}
+                <div class="flex-grow">
+                    <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
+                    <p class="text-xs text-gray-500 mt-1">Última fecha de estudio: <span class="font-medium ${isAvailable ? 'text-green-700' : 'text-gray-500'}">${lastResultDate}</span></p>
+                </div>
+                <span class="ml-auto text-sm font-medium text-right ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-400'}">
+                    ${isAvailable ? 'VER RESULTADO' : 'PENDIENTE'}
                 </span>
                 <i class="fas fa-chevron-right ml-2 text-gray-400"></i>
             </a>
@@ -743,7 +761,7 @@ function mostrarInformeEscrito(nombre, resumenAI) {
  */
 function imprimirContenido(elementId, title) {
     const printContent = document.getElementById(elementId).innerHTML;
-    const originalContent = document.body.innerHTML;
+    // const originalContent = document.body.innerHTML; // No usado, solo para referencia
 
     // Crear contenido de impresión con estilos básicos para el informe
     const printWindow = window.open('', '_blank', 'height=600,width=800');
