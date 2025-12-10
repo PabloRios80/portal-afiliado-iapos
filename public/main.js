@@ -647,8 +647,7 @@ function cargarEstudiosTab(estudiosResults) {
     ];
 
     let html = '';
-
-    // **LÓGICA DE PROCESAMIENTO MULTIPLE**
+        // **LÓGICA DE PROCESAMIENTO MULTIPLE**
     estudiosMaestros.forEach(estudio => {
         // Busca el resultado en el objeto que pasamos (estudiosResults) usando la clave ('laboratorio', 'mamografia', etc.)
         const result = estudiosResults[estudio.key];
@@ -658,10 +657,16 @@ function cargarEstudiosTab(estudiosResults) {
         const link = isAvailable ? result.link : 'javascript:void(0)';
         
         // --- CAMBIO CLAVE: Determinar el texto de estado y la fecha ---
-        const lastResultDate = result && result.fechaResultado ? result.fechaResultado : 'Sin fecha';
-        const statusText = isAvailable 
-            ? `<span class="font-bold">VER RESULTADO</span> (último: ${lastResultDate})` 
-            : 'PENDIENTE o Sin Resultados Cargados';
+        // 1.1. lastResultDate es null si no hay fecha, como lo definiste
+        const lastResultDate = result && result.fechaResultado ? result.fechaResultado : null;
+
+        // 1.2. Generar el subtítulo que se mostrará. Si hay fecha, muestra el texto completo; si no, solo PENDIENTE
+        const subtitleHtml = lastResultDate
+            ? `<p class="text-xs text-gray-500 mt-1">Última fecha de estudio: <span class="font-medium ${isAvailable ? 'text-green-700' : 'text-gray-500'}">${lastResultDate}</span></p>`
+            : `<p class="text-xs text-gray-500 mt-1"></p>`;
+        
+        // La variable statusText no se utiliza en la plantilla final, así que la removemos para limpieza
+        // const statusText = isAvailable ? `<span class="font-bold">VER RESULTADO</span> (último: ${lastResultDate})` : 'PENDIENTE o Sin Resultados Cargados';
         // -----------------------------------------------------------
 
         // 2. Clases dinámicas: verde si disponible, morado por defecto si pendiente
@@ -684,7 +689,8 @@ function cargarEstudiosTab(estudiosResults) {
                 <i class="${estudio.icon} ${iconClasses} text-2xl mr-4"></i>
                 <div class="flex-grow">
                     <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
-                    <p class="text-xs text-gray-500 mt-1">Última fecha de estudio: <span class="font-medium ${isAvailable ? 'text-green-700' : 'text-gray-500'}">${lastResultDate}</span></p>
+                    <!-- CORRECCIÓN: Usar la variable subtitleHtml calculada -->
+                    ${subtitleHtml} 
                 </div>
                 <span class="ml-auto text-sm font-medium text-right ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-400'}">
                     ${isAvailable ? 'VER RESULTADO' : 'PENDIENTE'}
@@ -696,7 +702,6 @@ function cargarEstudiosTab(estudiosResults) {
 
     contenedor.innerHTML = html;
 }
-
 // ==============================================================================
 // 5. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
 // ==============================================================================
