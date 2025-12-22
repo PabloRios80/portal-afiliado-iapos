@@ -22,10 +22,7 @@ const API_BASE_PATH = '/api';
 let allReports = [];
 // Variable para almacenar los resultados de estudios complementarios (son estáticos por DNI)
 let cachedEstudiosResults = {};
-// ---------------------------------
 
-
-// ==============================================================================
 // 1. CONFIGURACIÓN INICIAL (DOMContentLoaded)
 // ==============================================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -213,39 +210,35 @@ async function obtenerResumenAI(persona) {
  * @returns {Promise<Object>} El enlace, la fecha del último resultado o un objeto de error.
  */
 async function obtenerLinkEstudios(dni, studyType) {
-    // La URL ahora incluye el parámetro 'tipo'
     const studyApiUrl = `${ESTUDIOS_API_URL}/api/buscar-estudios?dni=${dni}&tipo=${studyType}`;
 
     try {
         const response = await fetch(studyApiUrl);
         const data = await response.json();
 
-        // El microservicio ahora devuelve 404 si el DNI o el link no se encontraron.
         if (response.status === 404) {
-            // Error de No Encontrado o sin resultados
             return { link: null, error: data.error, tipo: studyType, fechaResultado: null };
         }
 
-        if (response.ok && data.link) {
-            // Éxito: link encontrado. Se asume que 'data' ahora incluye 'fechaResultado' (DD/MM/YYYY)
-            // Si el servidor no lo provee, 'fechaResultado' será undefined y se tratará como null.
+        if (response.ok) {
+            // Retornamos el objeto completo asegurando que 'datos' sea accesible para Enfermería
             return { 
-                link: data.link, 
+                link: data.link || null, 
+                datos: data.datos || null, 
                 tipo: studyType, 
                 mensaje: data.mensaje,
-                fechaResultado: data.fechaResultado || null // Asumimos que el servidor lo provee
+                // Si es enfermería, intentamos sacar la fecha de los datos internos si no viene en la raíz
+                fechaResultado: data.fechaResultado || (data.datos ? data.datos.fecha : null) || null 
             };
         } else {
-             // Esto captura si el microservicio devuelve 500 o si la respuesta no es .ok
-            const errorMessage = data.error || `Error del microservicio de Estudios (${response.status} - ${studyType})`;
+            const errorMessage = data.error || `Error del microservicio (${response.status})`;
             throw new Error(errorMessage);
         }
     } catch (error) {
         console.error(`Fallo al buscar estudios complementarios (${studyType}):`, error);
-        // Devolvemos un objeto de error para mostrar un mensaje informativo
         return { 
             link: null, 
-            error: `El servicio de Estudios Complementarios falló o no está disponible para ${studyType}.`,
+            error: `Servicio no disponible para ${studyType}.`,
             tipo: studyType,
             fechaResultado: null
         };
@@ -629,8 +622,8 @@ async function updateDashboardContent(reportId) {
  */
 function cargarEstudiosTab(estudiosResults) {
     const contenedor = document.getElementById('estudios-complementarios-lista');
+    if (!contenedor) return;
 
-    // Definición maestra de todos los estudios
     const estudiosMaestros = [
         { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', key: 'laboratorio' },
         { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia' },
@@ -647,59 +640,57 @@ function cargarEstudiosTab(estudiosResults) {
     ];
 
     let html = '';
-        // **LÓGICA DE PROCESAMIENTO MULTIPLE**
-    estudiosMaestros.forEach(estudio => {
-        // Busca el resultado en el objeto que pasamos (estudiosResults) usando la clave ('laboratorio', 'mamografia', etc.)
-        const result = estudiosResults[estudio.key];
+    
+    // Usamos un objeto global temporal para evitar errores de escape de JSON en el HTML
+    window._cachedEnfermeriaData = null;
 
-        // 1. Determinar si hay un link disponible
-        const isAvailable = result && result.link;
-        const link = isAvailable ? result.link : 'javascript:void(0)';
+    estudiosMaestros.forEach(estudio => {
+        const result = estudiosResults[estudio.key];
+        const isAvailable = result && (result.link || result.datos);
         
-        // --- CAMBIO CLAVE: Determinar el texto de estado y la fecha ---
-        // 1.1. lastResultDate es null si no hay fecha, como lo definiste
+        let clickAction = '';
+        
+        if (isAvailable) {
+            if (estudio.key === 'enfermeria') {
+                // Guardamos los datos en una variable global para que el onclick la acceda directamente
+                window._cachedEnfermeriaData = result.datos;
+                clickAction = `onclick="abrirModalEnfermeria(window._cachedEnfermeriaData); return false;"`;
+            } else {
+                clickAction = `onclick="window.open('${result.link}', '_blank')"`;
+            }
+        }
+
         const lastResultDate = result && result.fechaResultado ? result.fechaResultado : null;
 
-        // 1.2. Generar el subtítulo que se mostrará. Si hay fecha, muestra el texto completo; si no, solo PENDIENTE
         const subtitleHtml = lastResultDate
-            ? `<p class="text-xs text-gray-500 mt-1">Última fecha de estudio: <span class="font-medium ${isAvailable ? 'text-green-700' : 'text-gray-500'}">${lastResultDate}</span></p>`
+            ? `<p class="text-xs text-gray-500 mt-1">Última fecha de estudio: <span class="font-medium text-green-700">${lastResultDate}</span></p>`
             : `<p class="text-xs text-gray-500 mt-1"></p>`;
-        
-        // La variable statusText no se utiliza en la plantilla final, así que la removemos para limpieza
-        // const statusText = isAvailable ? `<span class="font-bold">VER RESULTADO</span> (último: ${lastResultDate})` : 'PENDIENTE o Sin Resultados Cargados';
-        // -----------------------------------------------------------
 
-        // 2. Clases dinámicas: verde si disponible, morado por defecto si pendiente
         const linkClasses = isAvailable 
-            ? 'border-green-500 hover:border-green-700 bg-green-50 hover:bg-green-100'
+            ? 'border-green-500 hover:border-green-700 bg-green-50 hover:bg-green-100 cursor-pointer'
             : 'border-purple-500 opacity-70 cursor-default';
+        
         const iconClasses = isAvailable ? 'text-green-600' : 'text-purple-600';
 
-        // 3. Manejador de click: Si no está disponible, muestra el error de la búsqueda o un mensaje genérico
-        const defaultErrorMessage = 'Este estudio no tiene resultados cargados todavía.';
-        const errorMessage = result && result.error ? `Error en la búsqueda: ${result.error}` : defaultErrorMessage;
-
         const onClickHandler = isAvailable 
-            ? '' 
-            : `onclick="Swal.fire('Aún No Disponible', '${errorMessage.replace(/'/g, "\\'")}', 'info')"`;
+            ? clickAction 
+            : `onclick="Swal.fire('Aún No Disponible', 'Este estudio no tiene resultados cargados todavía.', 'info')"`;
 
         html += `
-            <a href="${link}" ${isAvailable ? 'target="_blank" rel="noopener noreferrer"' : ''} ${onClickHandler}
+            <div ${onClickHandler}
                 class="flex items-center p-4 bg-white rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 ${linkClasses}">
                 <i class="${estudio.icon} ${iconClasses} text-2xl mr-4"></i>
                 <div class="flex-grow">
                     <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
-                    <!-- CORRECCIÓN: Usar la variable subtitleHtml calculada -->
                     ${subtitleHtml} 
                 </div>
                 <span class="ml-auto text-sm font-medium text-right ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-400'}">
                     ${isAvailable ? 'VER RESULTADO' : 'PENDIENTE'}
                 </span>
                 <i class="fas fa-chevron-right ml-2 text-gray-400"></i>
-            </a>
+            </div>
         `;
     });
-
     contenedor.innerHTML = html;
 }
 // ==============================================================================
@@ -787,6 +778,125 @@ function imprimirContenido(elementId, title) {
         // No cerramos la ventana automáticamente; el usuario puede hacerlo.
         // printWindow.close();
     }, 500); // 500ms de espera
+}
+async function testConexionEnfermeria(dni) {
+    console.log("🔍 Probando conexión para DNI:", dni);
+    try {
+        const response = await fetch('/api/buscar-enfermeria', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dni: dni })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            console.log("⭐ ¡ÉXITO! Respuesta del servidor:");
+            console.table(result.raw); // Muestra la fila en formato tabla en la consola
+            console.log("DNI en tabla:", result.dni_detectado);
+            console.log("Nombre en tabla:", result.nombre_detectado);
+            
+            // Si esto funciona, lanzamos una alerta simple
+            alert(`Conexión OK: Detectado ${result.nombre_detectado}`);
+        } else {
+            console.error("❌ Error en la respuesta:", result.error);
+        }
+    } catch (err) {
+        console.error("❌ Error de red:", err);
+    }
+}
+function abrirModalEnfermeria(datosRaw) {
+    if (!datosRaw) {
+        console.error("Error: No se proporcionaron datos para el modal.");
+        return;
+    }
+
+    // Normalizamos los datos (por si vienen envueltos en otra propiedad)
+    const d = datosRaw.datos ? datosRaw.datos : datosRaw;
+
+    // Eliminamos cualquier versión anterior del modal
+    const oldModal = document.getElementById('modal-enfermeria-v3');
+    if (oldModal) oldModal.remove();
+
+    const modalHTML = `
+    <div id="modal-enfermeria-v3" style="position: fixed; inset: 0; z-index: 999999; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.85); font-family: sans-serif; padding: 15px;">
+        <div style="background: white; width: 100%; max-width: 500px; border-radius: 20px; overflow: hidden; position: relative; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
+            
+            <div style="background: #1e293b; color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: 0.5px;">🏥 FICHA ENFERMERÍA</h2>
+                <button onclick="document.getElementById('modal-enfermeria-v3').remove()" 
+                        style="background: #ef4444; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 14px;">
+                    CERRAR [X]
+                </button>
+            </div>
+
+            <div style="padding: 25px; max-height: 70vh; overflow-y: auto; background: #f8fafc;">
+                
+                <div style="background: #f1f5f9; padding: 15px; border-radius: 12px; margin-bottom: 20px; border-left: 5px solid #3b82f6;">
+                    <div style="font-size: 0.7rem; color: #64748b; font-weight: bold; text-transform: uppercase;">Paciente</div>
+                    <div style="font-size: 1.4rem; font-weight: 900; color: #0f172a;">${d.nombre || ''} ${d.apellido || ''}</div>
+                    <div style="font-size: 0.9rem; color: #3b82f6; font-weight: bold;">DNI: ${d.dni || '---'}</div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                    <div style="background: #fff1f2; padding: 15px; border-radius: 15px; text-align: center; border: 1px solid #fecdd3;">
+                        <div style="font-size: 0.7rem; color: #e11d48; font-weight: bold;">PRESIÓN ARTERIAL</div>
+                        <div style="font-size: 1.5rem; font-weight: 900; color: #9f1239;">${d.presion || '---'}</div>
+                        <div style="font-size: 0.6rem; color: #fb7185;">mmHg</div>
+                    </div>
+                    <div style="background: #f0fdf4; padding: 15px; border-radius: 15px; text-align: center; border: 1px solid #bbf7d0;">
+                        <div style="font-size: 0.7rem; color: #166534; font-weight: bold;">AGUDEZA VISUAL</div>
+                        <div style="font-size: 1.5rem; font-weight: 900; color: #14532d;">${d.agudeza || '---'}</div>
+                    </div>
+                </div>
+
+                <div style="background: #1e293b; color: white; padding: 20px; border-radius: 15px; display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-bottom: 20px;">
+                    <div>
+                        <div style="font-size: 0.6rem; color: #94a3b8;">PESO</div>
+                        <div style="font-size: 1.1rem; font-weight: bold;">${d.peso || '---'} kg</div>
+                    </div>
+                    <div style="border-left: 1px solid #334155; border-right: 1px solid #334155;">
+                        <div style="font-size: 0.6rem; color: #94a3b8;">ALTURA</div>
+                        <div style="font-size: 1.1rem; font-weight: bold;">${d.altura || '---'} cm</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.6rem; color: #94a3b8;">CINTURA</div>
+                        <div style="font-size: 1.1rem; font-weight: bold;">${d.cintura || '---'} cm</div>
+                    </div>
+                </div>
+
+                <div style="background: white; padding: 15px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
+                    <div style="font-size: 0.7rem; color: #64748b; font-weight: bold; margin-bottom: 5px;">ESTADO DE VACUNACIÓN</div>
+                    <div style="font-size: 0.9rem; color: #1e293b; line-height: 1.4;">💉 ${d.vacunas || 'No hay vacunas registradas.'}</div>
+                </div>
+
+                <div style="font-size: 0.7rem; color: #94a3b8; display: flex; justify-content: space-between;">
+                    <span>Registrado por: <b>${d.enfermera || '---'}</b></span>
+                    <span>Fecha: <b>${d.fecha || '---'}</b></span>
+                </div>
+            </div>
+
+            <div style="padding: 15px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
+                <button onclick="document.getElementById('modal-enfermeria-v3').remove()" 
+                        style="width: 100%; background: #0f172a; color: white; border: none; padding: 15px; border-radius: 10px; font-weight: 800; cursor: pointer; text-transform: uppercase;">
+                    ENTENDIDO
+                </button>
+            </div>
+        </div>
+    </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+/**
+ * Cierra el modal con una transición de opacidad.
+ */
+function cerrarModalEnfermeria() {
+    const modal = document.getElementById('modal-enfermeria-custom');
+    if (modal) {
+        modal.classList.add('opacity-0');
+        setTimeout(() => modal.remove(), 200);
+    }
 }
 
 /**
