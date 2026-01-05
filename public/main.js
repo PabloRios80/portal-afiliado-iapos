@@ -9,18 +9,15 @@
  * 3. Se agregó la función `updateDashboardContent` para manejar el cambio de informe por fecha.
  * 4. El selector de fecha (historial) se movió al inicio de la pestaña "Día Preventivo".
  * 5. Se agregó la fecha del último estudio complementario cargado en la tarjeta de la pestaña Estudios Complementarios.
+ * 6. Limpieza quirúrgica de indicadores técnicos (RAWDATE) en el Dashboard.
+ * 7. FILTRO DE SEXO: Oculta estudios femeninos si el paciente es Masculino.
  */
 
 // --- Variables Globales ---
-// Obtenida del HTML (inyectada por server.js). Apunta a http://localhost:4000 en local o la URL de Render en producción.
 const ESTUDIOS_API_URL = window.ESTUDIOS_API_URL || 'http://localhost:4000';
-// API URL del servicio principal (llama al mismo servidor Node.js que sirve este HTML)
 const API_BASE_PATH = '/api';
 
-// --- NUEVAS VARIABLES DE ESTADO ---
-// Variable para almacenar todos los informes históricos después de la búsqueda inicial
 let allReports = [];
-// Variable para almacenar los resultados de estudios complementarios (son estáticos por DNI)
 let cachedEstudiosResults = {};
 
 // 1. CONFIGURACIÓN INICIAL (DOMContentLoaded)
@@ -30,7 +27,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnVerPortal) {
         btnVerPortal.addEventListener('click', async () => {
-            // 1. Solicitar DNI
             const { value: dni } = await Swal.fire({
                 title: 'Ingresa tu DNI',
                 input: 'text',
@@ -56,7 +52,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 try {
-                    // 2. Buscar datos en el servidor
                     const response = await fetch('/api/buscar-datos', {
                         method: 'POST',
                         headers: {
@@ -71,12 +66,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         throw new Error(dataResult.error || 'Error desconocido al buscar datos.');
                     }
 
-                    // 2.1. Adaptar la respuesta: asume que el servidor devuelve 'reports' (array) o 'persona' (objeto).
                     let reports = dataResult.reports;
 
                     if (!reports || reports.length === 0) {
                         if (dataResult.persona) {
-                            // Si solo viene un resultado (viejo formato), lo convertimos en un array de un elemento
                             reports = [dataResult.persona];
                         } else {
                             Swal.fire('No Encontrado', 'No se encontraron resultados para el DNI ingresado.', 'error');
@@ -84,34 +77,26 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
 
-                    // 1. Función para ordenar por fecha (la más reciente primero)
                     const sortedReports = [...reports].sort((a, b) => {
                         const parseDate = (dateStr) => {
                             const parts = dateStr.split('/');
-                            // Nota: Asume formato DD/MM/YYYY. Crea la fecha como YYYY-MM-DD para una comparación correcta.
                             return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
                         };
 
-                        const dateA = parseDate(a.FECHAX || "01/01/1970"); // Usar fecha de fallback
+                        const dateA = parseDate(a.FECHAX || "01/01/1970");
                         const dateB = parseDate(b.FECHAX || "01/01/1970");
-                        return dateB - dateA; // Orden descendente (más nuevo primero)
+                        return dateB - dateA;
                     });
 
-                    // 2. Se selecciona automáticamente el informe más reciente
                     const selectedReport = sortedReports[0];
 
-                    // ===============================================================
-                    // 	*** ALMACENAMIENTO DE ESTADO GLOBAL ***
-                    // ===============================================================
                     allReports = sortedReports;
                     
-                    const personaData = selectedReport; // El informe seleccionado se usa como persona
+                    const personaData = selectedReport;
                     const dniToSearch = personaData.DNI;
 
-                    // LLAMADAS PARALELAS ESPECÍFICAS (IA ACTIVADA y Estudios, solo una vez)
-                    // NOTA: obtenerLinkEstudios ahora debe devolver { link: ..., fechaResultado: ... }
                     const [
-                        resumenAI, // LA IA SIGUE AQUÍ, ACTIVA
+                        resumenAI,
                         labResult,
                         mamografiaResult,
                         ecografiaResult,
@@ -124,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         odontologiaResult,
                         biopsiaResult
                     ] = await Promise.all([
-                        obtenerResumenAI(personaData), // La función obtenerResumenAI es llamada
+                        obtenerResumenAI(personaData),
                         obtenerLinkEstudios(dniToSearch, 'laboratorio'),
                         obtenerLinkEstudios(dniToSearch, 'mamografia'),
                         obtenerLinkEstudios(dniToSearch, 'ecografia'),
@@ -138,7 +123,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         obtenerLinkEstudios(dniToSearch, 'biopsia')
                     ]);
 
-                    // 4. Cargar el Portal Personal de Salud (Nueva Vista)
                     const estudiosResults = {
                         laboratorio: labResult,
                         mamografia: mamografiaResult,
@@ -153,11 +137,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         biopsia: biopsiaResult
                     };
                     
-                    cachedEstudiosResults = estudiosResults; // Guardar resultados estáticos
+                    cachedEstudiosResults = estudiosResults;
 
-                    cargarPortalPersonal(personaData, resumenAI); // Usará allReports y cachedEstudiosResults
+                    cargarPortalPersonal(personaData, resumenAI);
 
-                    Swal.close(); // Cerrar el loading
+                    Swal.close();
 
                 } catch (error) {
                     console.error('Error en el proceso de búsqueda:', error);
@@ -172,10 +156,6 @@ document.addEventListener('DOMContentLoaded', () => {
 // 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO
 // ==============================================================================
 
-/**
- * Llama al servidor para obtener el resumen de IA. (MANTENIDO ACTIVO)
- * @param {Object} persona Datos del paciente (el informe seleccionado).
- */
 async function obtenerResumenAI(persona) {
     try {
         const response = await fetch('/api/analizar-informe', {
@@ -200,15 +180,6 @@ async function obtenerResumenAI(persona) {
     }
 }
 
-
-/**
- * Llama al microservicio de Estudios Complementarios (puerto 4000) para un 
- * estudio ESPECÍFICO (ej. 'laboratorio' o 'mamografia').
- * Se asume que el microservicio devuelve el resultado más reciente y su fecha.
- * * @param {string} dni El DNI del paciente.
- * @param {string} studyType El tipo de estudio a buscar ('laboratorio', 'mamografia').
- * @returns {Promise<Object>} El enlace, la fecha del último resultado o un objeto de error.
- */
 async function obtenerLinkEstudios(dni, studyType) {
     const studyApiUrl = `${ESTUDIOS_API_URL}/api/buscar-estudios?dni=${dni}&tipo=${studyType}`;
 
@@ -221,13 +192,11 @@ async function obtenerLinkEstudios(dni, studyType) {
         }
 
         if (response.ok) {
-            // Retornamos el objeto completo asegurando que 'datos' sea accesible para Enfermería
             return { 
                 link: data.link || null, 
                 datos: data.datos || null, 
                 tipo: studyType, 
                 mensaje: data.mensaje,
-                // Si es enfermería, intentamos sacar la fecha de los datos internos si no viene en la raíz
                 fechaResultado: data.fechaResultado || (data.datos ? data.datos.fecha : null) || null 
             };
         } else {
@@ -245,40 +214,32 @@ async function obtenerLinkEstudios(dni, studyType) {
     }
 }
 
-/**
- * Mapea un valor de columna a un nivel de riesgo (color/ícono).
- * Criterios actualizados por el cliente.
- */
 function getRiskLevel(key, value) {
     const v = String(value || '').toLowerCase().trim();
     const k = key.toLowerCase().trim();
 
-    // 0. Regla de NEUTRO (Gris) - Máxima Prioridad para variables informativas
     if (['edad', 'sexo', 'profesional', 'fechax', 'dni'].includes(k)) {
         return { color: 'gray', icon: 'info', text: 'Informativo' };
     }
 
-    // 1. Reglas de CALMA (Verde) - Ausencia de Riesgo (Prioridad Alta)
     if (v.includes('no presenta') || 
         v.includes('normal') || 
         v.includes('adecuada') || 
-        v.includes('no abusa') || // Abuso Alcohol
-        v.includes('no se verifica') || // Violencia, Depresión, etc.
+        v.includes('no abusa') || 
+        v.includes('no se verifica') || 
         v.includes('no fuma') || 
-        v.includes('cumple') || // Seguridad Vial
-        v.includes('no indicado') || // Ácido Fólico
-        v.includes('no aplica') || // No Aplica
+        v.includes('cumple') || 
+        v.includes('no indicado') || 
+        v.includes('no aplica') || 
         v.includes('bajo') || 
         v.includes('realiza') ||
-        v.includes('completo') || // Inmunizaciones 
+        v.includes('completo') || 
         v.includes('sí') ||
         v.includes('riesgo bajo') || 
         v.includes('negativo')) {
         return { color: 'green', icon: 'check', text: 'Calma' };
     }
 
-    // 2. Reglas universales de ALERTA (Rojo)
-    // Se ejecuta si NO pasó la regla Verde, buscando presencia de riesgo.
     if (v.includes('sí presenta') || 
         v.includes('presenta') || 
         v.includes('elevado') || 
@@ -289,15 +250,14 @@ function getRiskLevel(key, value) {
         v.includes('pendiente') || 
         v.includes('riesgo alto') || 
         v.includes('positivo') ||
-        v.includes('incompleto') || // Inmunizaciones
-        v.includes('obesidad') || // IMC
-        v.includes('hipertensión') || // Presión Arterial
-        v.includes('hipertension') // Presión Arterial (sin acento)
+        v.includes('incompleto') || 
+        v.includes('obesidad') || 
+        v.includes('hipertensión') || 
+        v.includes('hipertension') 
         ) {
         return { color: 'red', icon: 'times', text: 'Alerta' };
     }
 
-    // 3. Reglas específicas o de ATENCIÓN (Amarillo)
     if (k.includes('imc') && (v.includes('sobrepeso') || v.includes('bajo peso'))) {
         return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
     }
@@ -309,12 +269,10 @@ function getRiskLevel(key, value) {
         return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
     }
 
-    // Si el valor no es claro pero existe, por defecto es atención.
     if (v.length > 0) {
         return { color: 'gray', icon: 'question', text: 'Sin Dato' };
     }
 
-    // Si el valor está vacío o no mapeado
     return { color: 'gray', icon: 'question', text: 'Sin Dato' };
 }
 
@@ -323,23 +281,16 @@ function getRiskLevel(key, value) {
 // 3. FUNCIONES DEL PORTAL PERSONAL DE SALUD (Dashboard y Pestañas)
 // ==============================================================================
 
-/**
- * Carga el Portal Personal de Salud y configura la navegación.
- * @param {Object} persona Datos del paciente (el informe seleccionado, el más reciente por defecto).
- * @param {string} resumenAI Resumen generado por la IA para ese informe.
- */
 function cargarPortalPersonal(persona, resumenAI) {
-    // 1. Ocultar la vista inicial y mostrar el portal
     document.getElementById('vista-inicial').style.display = 'none';
     document.getElementById('portal-salud-container').style.display = 'block';
 
-    // 2. Cargar el contenido de las pestañas
-    // La pestaña de Estudios no cambia al cambiar la fecha del informe, usa los datos cacheados.
+    // Guardamos el sexo en una variable global para acceso rápido en las pestañas
+    window.pacienteSexo = String(persona['Sexo'] || persona['sexo'] || '').toLowerCase().trim();
+
     cargarDiaPreventivoTab(persona, resumenAI); 
     cargarEstudiosTab(cachedEstudiosResults); 
-    // cargarOtrosServiciosTab(); // Función pendiente
 
-    // 3. Construir la navegación (Botones)
     const navContenedor = document.getElementById('portal-navegacion');
     navContenedor.innerHTML = `
         <button id="btn-tab-dia-preventivo" class="tab-btn active bg-blue-600 text-white font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
@@ -353,7 +304,6 @@ function cargarPortalPersonal(persona, resumenAI) {
         </button>
     `;
 
-    // 4. Configurar Listeners y Mostrar la primera pestaña
     document.querySelectorAll('.tab-btn').forEach(button => {
         button.addEventListener('click', () => {
             const targetId = button.id.replace('btn-tab-', 'tab-');
@@ -361,30 +311,23 @@ function cargarPortalPersonal(persona, resumenAI) {
         });
     });
 
-    mostrarPestana('tab-dia-preventivo'); // Mostrar la pestaña principal por defecto
+    mostrarPestana('tab-dia-preventivo');
     window.scrollTo(0, 0);
 }
 
 
-/**
- * Función para manejar el cambio entre pestañas.
- */
 function mostrarPestana(tabId) {
-    // Ocultar todas las pestañas
     document.querySelectorAll('.tab-pane').forEach(tab => {
         tab.style.display = 'none';
     });
 
-    // Desactivar todos los botones
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active', 'bg-blue-600', 'text-white', 'border-blue-500');
         btn.classList.add('text-gray-700', 'hover:bg-gray-100');
     });
 
-    // Mostrar la pestaña seleccionada
     document.getElementById(tabId).style.display = 'block';
 
-    // Activar el botón correspondiente
     const activeBtn = document.getElementById('btn-' + tabId);
     if (activeBtn) {
         activeBtn.classList.add('active', 'bg-blue-600', 'text-white');
@@ -396,24 +339,18 @@ function mostrarPestana(tabId) {
 // 4. CONTENIDO DE LAS PESTAÑAS
 // ==============================================================================
 
-/**
- * Genera el contenido para la pestaña Día Preventivo (Dashboard Visual + Botones de IA).
- * @param {Object} persona Datos del paciente (el informe seleccionado).
- * @param {string} resumenAI Resumen generado por la IA.
- */
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
     const dni = persona['DNI'] || 'N/A';
-    const fechaInforme = persona['FECHAX'] || 'N/A'; // Obtener la fecha del informe seleccionado
+    const fechaInforme = persona['FECHAX'] || 'N/A';
+    const sexo = window.pacienteSexo; // Obtenido en cargarPortalPersonal
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
 
-    // --- MANEJO DE FALLO DE LA IA (ROBUSTEZ) ---
     let resumenAILimpio = resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
     let summaryContent;
 
     if (!resumenAI || resumenAI.includes("ERROR CRÍTICO DE GEMINI") || resumenAI.includes("ERROR del servidor")) {
-        // Mensaje si la IA falló, pero NO por desactivación
         summaryContent = `
             <div class="p-4 bg-red-100 border-l-4 border-red-500 rounded-lg shadow-sm">
                 <strong class="text-red-700">❌ Error en el Resumen de IA:</strong> 
@@ -424,15 +361,11 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     } else {
         summaryContent = `<p class="text-base leading-relaxed">${resumenAILimpio}</p>`;
     }
-    // ------------------------------------------
 
-    // 0. DROPDOWN DE SELECCIÓN DE FECHA (Si hay múltiples informes)
     let dateSelectorHTML = '';
     if (allReports.length > 1) {
-        // Usamos allReports que ya está ordenado
         const dateOptions = allReports.map(report => {
             const date = report.FECHAX;
-            // Usamos FECHAX o un ID como valor, ya que es lo que identifica el registro en allReports
             const id = report.ID || date; 
             return { date, id };
         });
@@ -443,7 +376,6 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             </option>
         `).join('');
 
-        // *** BLOQUE MOVIDO PARA SER INSERTADO ANTES DEL DASHBOARD-CONTENIDO ***
         dateSelectorHTML = `
             <div class="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg shadow-md">
                 <label for="report-date-selector" class="block text-md font-bold text-yellow-800 mb-2">
@@ -457,13 +389,11 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         `;
     }
 
-    // 1. Construir el HTML del dashboard (Resultado a Resultado)
     let dashboardHTML = `
         <h1 class="text-2xl font-bold mb-6 text-gray-800">
             <i class="fas fa-heartbeat mr-2 text-blue-600"></i> Mis resultados del Día Preventivo
         </h1>
         
-        <!-- INSERCIÓN DEL SELECTOR DE FECHA AQUÍ (MOVIDO) -->
         ${dateSelectorHTML}
 
         <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-lg shadow-sm" id="informe-general-container">
@@ -482,19 +412,28 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     `;
 
-    // 1.1. Bucle para generar las tarjetas de riesgo
     for (const [key, value] of Object.entries(persona)) {
-        // Ignorar campos de identificación/log
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional'].includes(key)) {
             continue; 
         }
 
         const safeValue = String(value || ''); 
-        if (safeValue.trim() === '') continue; // Ignorar campos vacíos
+        
+        // --- FILTRO QUIRÚRGICO RAWDATE, SEXO Y FECHAS ISO ---
+        const keyUpper = key.toUpperCase();
+        const isRawDate = keyUpper === 'RAWDATE' || safeValue.includes('RAWDATE');
+        const isIsoDate = safeValue.includes('T') && safeValue.includes('Z') && safeValue.length > 15;
+        
+        // Filtro adicional por sexo para indicadores femeninos específicos que pudieran venir en el informe
+        const indicadoresFemeninos = ['PAPA', 'HPV', 'MAMOGRAFÍA', 'ECO MAMARIA'];
+        const esFemeninoInnecesario = (sexo === 'masculino') && indicadoresFemeninos.some(ind => keyUpper.includes(ind));
+
+        if (isRawDate || isIsoDate || safeValue.trim() === '' || esFemeninoInnecesario) {
+            continue; // Ignorar estos campos técnicos o no aplicables por sexo
+        }
 
         const risk = getRiskLevel(key, safeValue);
 
-        // Mapeo de colores Tailwind CSS
         const colorMap = {
             red: 'bg-red-100 border-red-500 text-red-700',
             yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700',
@@ -527,21 +466,15 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     dashboardHTML += `
             </div> </div> `;
 
-    // 2. Inyectar el HTML del Dashboard
     dashboardContenedor.innerHTML = dashboardHTML;
     
-    // 3. Configurar Listener del Dropdown (SOLO SI EXISTE)
     if (allReports.length > 1) {
-        // El listener debe agregarse DESPUÉS de inyectar el HTML en el DOM
         document.getElementById('report-date-selector').addEventListener('change', async (event) => {
             const selectedId = event.target.value;
-            // Llamar a la función principal de actualización
             await updateDashboardContent(selectedId); 
         });
     }
 
-
-    // 4. Contacto Directo del Programa Día Preventivo (Ajustado)
     let accionesHTML = `
         <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
             <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
@@ -557,7 +490,6 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         </div>
 
         <div class="flex flex-wrap items-center justify-center py-4">
-            <!-- ESTE BOTÓN LLAMA A LA FUNCIÓN mostrarInformeEscrito, QUE USA SweetAlert2 Y window.print() -->
             <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
             </button>
@@ -568,18 +500,10 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         </div>
     `;
 
-    // 5. Inyectar el HTML de Acciones y Contacto
     accionesContenedor.innerHTML = accionesHTML;
 }
 
-
-/**
- * Actualiza el contenido del dashboard del Día Preventivo al seleccionar
- * una fecha diferente del historial en el dropdown.
- * @param {string} reportId El ID (o FECHAX como fallback) del informe a mostrar.
- */
 async function updateDashboardContent(reportId) {
-    // Buscar el informe seleccionado en la lista global
     const newReport = allReports.find(r => (r.ID || r.FECHAX) === reportId);
 
     if (!newReport) {
@@ -597,17 +521,11 @@ async function updateDashboardContent(reportId) {
     });
 
     try {
-        // 1. Generar nuevo resumen de IA para el informe seleccionado
         const resumenAI = await obtenerResumenAI(newReport);
-        
-        // 2. Actualizar el contenido de la pestaña Día Preventivo con el nuevo informe
         cargarDiaPreventivoTab(newReport, resumenAI);
-        
-        // 3. Asegurar que la pestaña activa sea la del Día Preventivo
         mostrarPestana('tab-dia-preventivo'); 
-        
         Swal.close();
-        window.scrollTo(0, 0); // Mover al inicio para ver el cambio
+        window.scrollTo(0, 0);
 
     } catch (error) {
         console.error('Error al actualizar el informe histórico:', error);
@@ -615,24 +533,21 @@ async function updateDashboardContent(reportId) {
     }
 }
 
-
-/**
- * Genera el contenido estático/dinámico de la pestaña Estudios Complementarios.
- * @param {Object} estudiosResults Objeto con los resultados de estudios específicos.
- */
 function cargarEstudiosTab(estudiosResults) {
     const contenedor = document.getElementById('estudios-complementarios-lista');
     if (!contenedor) return;
 
+    const sexo = window.pacienteSexo;
+
     const estudiosMaestros = [
         { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', key: 'laboratorio' },
-        { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia' },
+        { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia', soloMujeres: true },
         { nombre: 'Ecografía', icon: 'fas fa-ultrasound', key: 'ecografia' },
         { nombre: 'Espirometría', icon: 'fas fa-lungs', key: 'espirometria' },
         { nombre: 'Enfermería', icon: 'fas fa-user-nurse', key: 'enfermeria' },
         { nombre: 'Densitometría', icon: 'fas fa-bone', key: 'densitometria' },
         { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', key: 'vcc' },
-        { nombre: 'Eco mamaria', icon: 'fas fa-ultrasound', key: 'ecomamaria' },
+        { nombre: 'Eco mamaria', icon: 'fas fa-ultrasound', key: 'ecomamaria', soloMujeres: true },
         { nombre: 'Odontología', icon: 'fas fa-tooth', key: 'odontologia' }, 
         { nombre: 'Biopsia', icon: 'fas fa-microscope', key: 'biopsia' }, 
         { nombre: 'Oftalmología', icon: 'fas fa-eye', key: 'oftalmologia' },
@@ -640,11 +555,14 @@ function cargarEstudiosTab(estudiosResults) {
     ];
 
     let html = '';
-    
-    // Usamos un objeto global temporal para evitar errores de escape de JSON en el HTML
     window._cachedEnfermeriaData = null;
 
     estudiosMaestros.forEach(estudio => {
+        // FILTRO QUIRÚRGICO DE SEXO
+        if (sexo === 'masculino' && estudio.soloMujeres) {
+            return; // No renderiza la tarjeta si es masculino y el estudio es femenino
+        }
+
         const result = estudiosResults[estudio.key];
         const isAvailable = result && (result.link || result.datos);
         
@@ -652,7 +570,6 @@ function cargarEstudiosTab(estudiosResults) {
         
         if (isAvailable) {
             if (estudio.key === 'enfermeria') {
-                // Guardamos los datos en una variable global para que el onclick la acceda directamente
                 window._cachedEnfermeriaData = result.datos;
                 clickAction = `onclick="abrirModalEnfermeria(window._cachedEnfermeriaData); return false;"`;
             } else {
@@ -693,16 +610,12 @@ function cargarEstudiosTab(estudiosResults) {
     });
     contenedor.innerHTML = html;
 }
+
 // ==============================================================================
 // 5. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
 // ==============================================================================
 
-/**
- * Función que abre el informe escrito AI en un modal, separada para limpieza, 
- * con opción directa de imprimir el contenido del modal.
- */
 function mostrarInformeEscrito(nombre, resumenAI) {
-    // Nota del programa Día Preventivo
     const contactoHtml = `
         <p class="mt-6 text-sm text-gray-700 border-t pt-4 italic">
             Si desea mayor precisión sobre los resultados o hablar con un profesional del programa, no dude en conectarse a estos medios.
@@ -713,7 +626,6 @@ function mostrarInformeEscrito(nombre, resumenAI) {
         </div>
     `;
 
-    // Contenido del modal que se desea imprimir
     const printableContent = `
         <div class="p-6">
             <h1 class="text-2xl font-bold mb-4 text-blue-800 border-b pb-2">Informe de Salud Generado por IA</h1>
@@ -725,7 +637,6 @@ function mostrarInformeEscrito(nombre, resumenAI) {
         </div>
     `;
 
-    // Mostrar el modal
     Swal.fire({
         title: 'Informe Escrito de la Inteligencia Artificial',
         html: `
@@ -736,49 +647,34 @@ function mostrarInformeEscrito(nombre, resumenAI) {
         confirmButtonText: '<i class="fas fa-print"></i> Imprimir Informe',
         cancelButtonText: 'Cerrar',
         customClass: {
-            container: 'z-50', // Asegura que esté por encima de otros elementos
+            container: 'z-50',
             popup: 'shadow-2xl'
         },
         focusConfirm: false,
         preConfirm: () => {
-            // Acción de Imprimir
             imprimirContenido('modal-informe-ai', `Informe AI - ${nombre}`);
-            return false; // Evita que el modal se cierre automáticamente después de la acción
+            return false;
         }
     });
 }
 
-
-/**
- * Inicia la impresión de un elemento específico.
- * Crea una ventana de impresión con el HTML de un elemento dado.
- * @param {string} elementId ID del elemento a imprimir.
- * @param {string} title Título para la ventana de impresión.
- */
 function imprimirContenido(elementId, title) {
     const printContent = document.getElementById(elementId).innerHTML;
-    // const originalContent = document.body.innerHTML; // No usado, solo para referencia
-
-    // Crear contenido de impresión con estilos básicos para el informe
     const printWindow = window.open('', '_blank', 'height=600,width=800');
     printWindow.document.write('<html><head><title>' + title + '</title>');
-    // Incluir Tailwind CDN para mantener los estilos básicos de las clases
     printWindow.document.write('<script src="https://cdn.tailwindcss.com"></script>');
-    // Incluir Font Awesome
     printWindow.document.write('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">');
     printWindow.document.write('</head><body class="p-10">');
     printWindow.document.write('<div class="prose max-w-none">' + printContent + '</div>');
     printWindow.document.write('</body></html>');
     printWindow.document.close();
     
-    // Esperar un momento para que Tailwind se cargue y aplique los estilos antes de imprimir
     setTimeout(() => {
         printWindow.focus();
         printWindow.print();
-        // No cerramos la ventana automáticamente; el usuario puede hacerlo.
-        // printWindow.close();
-    }, 500); // 500ms de espera
+    }, 500);
 }
+
 async function testConexionEnfermeria(dni) {
     console.log("🔍 Probando conexión para DNI:", dni);
     try {
@@ -792,11 +688,9 @@ async function testConexionEnfermeria(dni) {
 
         if (response.ok) {
             console.log("⭐ ¡ÉXITO! Respuesta del servidor:");
-            console.table(result.raw); // Muestra la fila en formato tabla en la consola
+            console.table(result.raw); 
             console.log("DNI en tabla:", result.dni_detectado);
             console.log("Nombre en tabla:", result.nombre_detectado);
-            
-            // Si esto funciona, lanzamos una alerta simple
             alert(`Conexión OK: Detectado ${result.nombre_detectado}`);
         } else {
             console.error("❌ Error en la respuesta:", result.error);
@@ -805,23 +699,20 @@ async function testConexionEnfermeria(dni) {
         console.error("❌ Error de red:", err);
     }
 }
+
 function abrirModalEnfermeria(datosRaw) {
     if (!datosRaw) {
         console.error("Error: No se proporcionaron datos para el modal.");
         return;
     }
 
-    // Normalizamos los datos (por si vienen envueltos en otra propiedad)
     const d = datosRaw.datos ? datosRaw.datos : datosRaw;
-
-    // Eliminamos cualquier versión anterior del modal
     const oldModal = document.getElementById('modal-enfermeria-v3');
     if (oldModal) oldModal.remove();
 
     const modalHTML = `
     <div id="modal-enfermeria-v3" style="position: fixed; inset: 0; z-index: 999999; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.85); font-family: sans-serif; padding: 15px;">
         <div style="background: white; width: 100%; max-width: 500px; border-radius: 20px; overflow: hidden; position: relative; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
-            
             <div style="background: #1e293b; color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center;">
                 <h2 style="margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: 0.5px;">🏥 FICHA ENFERMERÍA</h2>
                 <button onclick="document.getElementById('modal-enfermeria-v3').remove()" 
@@ -829,15 +720,12 @@ function abrirModalEnfermeria(datosRaw) {
                     CERRAR [X]
                 </button>
             </div>
-
             <div style="padding: 25px; max-height: 70vh; overflow-y: auto; background: #f8fafc;">
-                
                 <div style="background: #f1f5f9; padding: 15px; border-radius: 12px; margin-bottom: 20px; border-left: 5px solid #3b82f6;">
                     <div style="font-size: 0.7rem; color: #64748b; font-weight: bold; text-transform: uppercase;">Paciente</div>
                     <div style="font-size: 1.4rem; font-weight: 900; color: #0f172a;">${d.nombre || ''} ${d.apellido || ''}</div>
                     <div style="font-size: 0.9rem; color: #3b82f6; font-weight: bold;">DNI: ${d.dni || '---'}</div>
                 </div>
-
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
                     <div style="background: #fff1f2; padding: 15px; border-radius: 15px; text-align: center; border: 1px solid #fecdd3;">
                         <div style="font-size: 0.7rem; color: #e11d48; font-weight: bold;">PRESIÓN ARTERIAL</div>
@@ -849,7 +737,6 @@ function abrirModalEnfermeria(datosRaw) {
                         <div style="font-size: 1.5rem; font-weight: 900; color: #14532d;">${d.agudeza || '---'}</div>
                     </div>
                 </div>
-
                 <div style="background: #1e293b; color: white; padding: 20px; border-radius: 15px; display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-bottom: 20px;">
                     <div>
                         <div style="font-size: 0.6rem; color: #94a3b8;">PESO</div>
@@ -864,18 +751,15 @@ function abrirModalEnfermeria(datosRaw) {
                         <div style="font-size: 1.1rem; font-weight: bold;">${d.cintura || '---'} cm</div>
                     </div>
                 </div>
-
                 <div style="background: white; padding: 15px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
                     <div style="font-size: 0.7rem; color: #64748b; font-weight: bold; margin-bottom: 5px;">ESTADO DE VACUNACIÓN</div>
                     <div style="font-size: 0.9rem; color: #1e293b; line-height: 1.4;">💉 ${d.vacunas || 'No hay vacunas registradas.'}</div>
                 </div>
-
                 <div style="font-size: 0.7rem; color: #94a3b8; display: flex; justify-content: space-between;">
                     <span>Registrado por: <b>${d.enfermera || '---'}</b></span>
                     <span>Fecha: <b>${d.fecha || '---'}</b></span>
                 </div>
             </div>
-
             <div style="padding: 15px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
                 <button onclick="document.getElementById('modal-enfermeria-v3').remove()" 
                         style="width: 100%; background: #0f172a; color: white; border: none; padding: 15px; border-radius: 10px; font-weight: 800; cursor: pointer; text-transform: uppercase;">
@@ -885,26 +769,10 @@ function abrirModalEnfermeria(datosRaw) {
         </div>
     </div>
     `;
-
     document.body.insertAdjacentHTML('beforeend', modalHTML);
 }
-/**
- * Cierra el modal con una transición de opacidad.
- */
-function cerrarModalEnfermeria() {
-    const modal = document.getElementById('modal-enfermeria-custom');
-    if (modal) {
-        modal.classList.add('opacity-0');
-        setTimeout(() => modal.remove(), 200);
-    }
-}
 
-/**
- * Función genérica para compartir el dashboard.
- */
 function compartirDashboard() {
-    // Idealmente, se usaría la API Navigator.share, pero requiere HTTPS y es para apps nativas.
-    // Usamos un modal informativo de cómo compartir.
     Swal.fire({
         title: 'Compartir Portal de Salud',
         html: `
@@ -926,11 +794,7 @@ function compartirDashboard() {
     });
 }
 
-/**
- * Copia la URL actual al portapapeles.
- */
 function copyCurrentUrl() {
-    // Usar execCommand ya que navigator.clipboard puede fallar en entornos iframe
     const el = document.createElement('textarea');
     el.value = window.location.href;
     document.body.appendChild(el);
@@ -945,8 +809,6 @@ function copyCurrentUrl() {
                 showConfirmButton: false,
                 timer: 1500
             });
-        } else {
-            throw new Error('Fallback copy failed.');
         }
     } catch (err) {
         Swal.fire({
