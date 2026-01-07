@@ -338,12 +338,12 @@ function mostrarPestana(tabId) {
 // ==============================================================================
 // 4. CONTENIDO DE LAS PESTAÑAS
 // ==============================================================================
-
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
     const dni = persona['DNI'] || 'N/A';
     const fechaInforme = persona['FECHAX'] || 'N/A';
-    const sexo = window.pacienteSexo; // Obtenido en cargarPortalPersonal
+    // Aseguramos que el sexo esté en minúsculas y sin espacios para la comparación
+    const sexo = String(window.pacienteSexo || '').toLowerCase().trim(); 
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
 
@@ -366,7 +366,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     if (allReports.length > 1) {
         const dateOptions = allReports.map(report => {
             const date = report.FECHAX;
-            const id = report.ID || date; 
+            const id = report.ID || date;
             return { date, id };
         });
 
@@ -412,25 +412,52 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     `;
 
+    // --- INICIO DEL BUCLE DE INDICADORES ---
     for (const [key, value] of Object.entries(persona)) {
+        
+        // 1. Omitir columnas técnicas
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional'].includes(key)) {
-            continue; 
+            continue;
         }
 
-        const safeValue = String(value || ''); 
-        
-        // --- FILTRO QUIRÚRGICO RAWDATE, SEXO Y FECHAS ISO ---
+        const safeValue = String(value || '');
         const keyUpper = key.toUpperCase();
+
+        // 2. Filtros de seguridad (fechas crudas, vacíos)
         const isRawDate = keyUpper === 'RAWDATE' || safeValue.includes('RAWDATE');
         const isIsoDate = safeValue.includes('T') && safeValue.includes('Z') && safeValue.length > 15;
-        
-        // Filtro adicional por sexo para indicadores femeninos específicos que pudieran venir en el informe
-        const indicadoresFemeninos = ['PAPA', 'HPV', 'MAMOGRAFÍA', 'ECO MAMARIA'];
-        const esFemeninoInnecesario = (sexo === 'masculino') && indicadoresFemeninos.some(ind => keyUpper.includes(ind));
 
-        if (isRawDate || isIsoDate || safeValue.trim() === '' || esFemeninoInnecesario) {
-            continue; // Ignorar estos campos técnicos o no aplicables por sexo
+        if (isRawDate || isIsoDate || safeValue.trim() === '') {
+            continue;
         }
+
+        // --- 3. FILTRO CRUZADO DE SEXO (MEJORADO) ---
+        // Normalizamos: quitamos tildes y a mayúsculas
+        const keyNormalized = keyUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+        // LISTA 1: Términos EXCLUSIVOS de MUJERES (ocultar a hombres)
+        const terminosFemeninos = [
+            'MAMOGRAFIA', 'ECO_MAMARIA', 'ECO MAMARIA', 'HPV', 'PAP', 'ACIDO FOLICO', 'UTERINO'
+        ];
+
+        // LISTA 2: Términos EXCLUSIVOS de HOMBRES (ocultar a mujeres)
+        const terminosMasculinos = [
+            'PROSTATA', 'PSA' // Detecta "Próstata - PSA"
+        ];
+
+        // LOGICA DE FILTRO:
+        if (sexo === 'masculino') {
+            // Si soy hombre, oculto cosas de mujeres
+            if (terminosFemeninos.some(termino => keyNormalized.includes(termino))) {
+                continue; 
+            }
+        } else if (sexo === 'femenino' || sexo === 'mujer') {
+            // Si soy mujer, oculto cosas de hombres
+            if (terminosMasculinos.some(termino => keyNormalized.includes(termino))) {
+                continue; 
+            }
+        }
+        // ---------------------------------------------
 
         const risk = getRiskLevel(key, safeValue);
 
@@ -462,16 +489,17 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             </div>
         `;
     }
+    // --- FIN DEL BUCLE ---
 
     dashboardHTML += `
             </div> </div> `;
 
     dashboardContenedor.innerHTML = dashboardHTML;
-    
+
     if (allReports.length > 1) {
         document.getElementById('report-date-selector').addEventListener('change', async (event) => {
             const selectedId = event.target.value;
-            await updateDashboardContent(selectedId); 
+            await updateDashboardContent(selectedId);
         });
     }
 
@@ -501,6 +529,39 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     `;
 
     accionesContenedor.innerHTML = accionesHTML;
+}
+function cargarEstudiosTab(estudiosResults) {
+    const contenedor = document.getElementById('estudios-complementarios-lista');
+    if (!contenedor) return;
+    
+    const sexo = window.pacienteSexo;
+    const estudiosConfig = [
+        { nombre: 'Laboratorio', key: 'laboratorio' },
+        { nombre: 'Mamografía', key: 'mamografia', femenino: true },
+        { nombre: 'Ecografía', key: 'ecografia' },
+        { nombre: 'Eco Mamaria', key: 'ecomamaria', femenino: true },
+        { nombre: 'Espirometría', key: 'espirometria' },
+        { nombre: 'Densitometría', key: 'densitometria' },
+        { nombre: 'VCC', key: 'vcc' }
+    ];
+
+    let html = '';
+    estudiosConfig.forEach(e => {
+        // FILTRO QUIRÚRGICO EN PESTAÑA ESTUDIOS
+        if (sexo === 'masculino' && e.femenino) return;
+
+        const res = estudiosResults[e.key];
+        const link = res && res.link;
+        const fecha = res && res.fechaResultado ? ` (${res.fechaResultado})` : '';
+        
+        html += `
+            <div class="flex justify-between items-center p-4 border-b hover:bg-gray-50">
+                <span class="font-semibold text-gray-700">${e.nombre}${fecha}</span>
+                ${link ? `<a href="${link}" target="_blank" class="bg-blue-600 text-white px-4 py-1 rounded shadow">VER</a>` : `<span class="text-gray-400 italic">Pendiente</span>`}
+            </div>
+        `;
+    });
+    contenedor.innerHTML = html;
 }
 
 async function updateDashboardContent(reportId) {
