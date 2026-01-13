@@ -208,7 +208,21 @@ app.post('/api/buscar-datos-por-fecha', async (req, res) => {
 
 // --- PROMPT DE LUJO (RESTAURADO TAL CUAL) ---
 function construirPrompt(datosPersona) {
-    const nombreProfesional = datosPersona["Profesional"] || "Desconocido";
+    // 1. BÚSQUEDA INTELIGENTE DEL PROFESIONAL
+    // Buscamos cualquier columna que se parezca a "profesional" (ignora mayúsculas y espacios)
+    const keyProfesional = Object.keys(datosPersona).find(key => 
+        key && key.trim().toLowerCase() === 'profesional'
+    );
+
+    // Obtenemos el valor. Si está vacío, ponemos un texto genérico amable.
+    const nombreProfesional = (keyProfesional && datosPersona[keyProfesional]) 
+        ? datosPersona[keyProfesional] 
+        : "un profesional médico de IAPOS";
+
+    // --- DEBUG: ESTO SALDRÁ EN TU CONSOLA NEGRA PARA CONTROL ---
+    console.log("🔍 Claves leídas del Excel:", Object.keys(datosPersona)); // ¿Dice 'Profesional' o dice 'A', 'B'...?
+    console.log("👨‍⚕️ Profesional detectado:", nombreProfesional);
+    // -----------------------------------------------------------
     const fechaInforme = datosPersona["FECHAX"] || "la fecha de tu último chequeo";
     const datosJson = JSON.stringify(datosPersona, null, 2);
     const camposDeRiesgo = ["Dislipemias", "Diabetes", "Presión Arterial", "IMC", "Alimentación saludable", "Actividad física", "Tabaco", "Estratificación riesgo CV", "Audición", "Agudeza visual"];
