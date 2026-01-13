@@ -213,6 +213,7 @@ async function obtenerLinkEstudios(dni, studyType) {
         };
     }
 }
+
 function getRiskLevel(key, value, edad, sexo) {
     const v = String(value || '').toLowerCase().trim();
     // Normalizamos clave: mayúsculas y sin tildes
@@ -420,12 +421,10 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     const dni = persona['DNI'] || 'N/A';
     const fechaInforme = persona['FECHAX'] || 'N/A';
     
-    // --- NUEVO: OBTENCIÓN DE EDAD SEGURA ---
-    // Buscamos la clave 'Edad' (o 'edad') y la convertimos a número
+    // --- OBTENCIÓN DE EDAD SEGURA ---
     const keyEdad = Object.keys(persona).find(k => k.toLowerCase() === 'edad');
     let edadPaciente = 0;
     if (keyEdad && persona[keyEdad]) {
-        // Extraemos solo los números por si dice "25 años"
         const edadMatch = String(persona[keyEdad]).match(/\d+/);
         edadPaciente = edadMatch ? parseInt(edadMatch[0]) : 0;
     }
@@ -448,16 +447,35 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         summaryContent = `<p class="text-base leading-relaxed">${resumenAILimpio}</p>`;
     }
 
-    // (Aquí va el código del selector de fecha igual que antes... lo abrevio para no ocupar tanto espacio, asume que está aquí)
     let dateSelectorHTML = ''; 
-    if (allReports.length > 1) { /* ... Código del selector de fechas ... */ }
+    if (allReports.length > 1) { 
+        const dateOptions = allReports.map(report => {
+            const date = report.FECHAX;
+            const id = report.ID || date;
+            return { date, id };
+        });
+        const optionsHtml = dateOptions.map(opt => `
+            <option value="${opt.id}" ${opt.date === fechaInforme ? 'selected' : ''}>
+                Día Preventivo del ${opt.date} ${opt.date === fechaInforme ? ' (Actual)' : ''}
+            </option>
+        `).join('');
+        dateSelectorHTML = `
+            <div class="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg shadow-md">
+                <label for="report-date-selector" class="block text-md font-bold text-yellow-800 mb-2">
+                    <i class="fas fa-history mr-2"></i> Historial de Informes Previos
+                </label>
+                <select id="report-date-selector" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-yellow-500 focus:border-yellow-500 sm:text-sm rounded-md shadow-inner transition duration-150">
+                    ${optionsHtml}
+                </select>
+            </div>
+        `;
+    }
 
-    // (Encabezado del HTML igual que antes)
     let dashboardHTML = `
         <h1 class="text-2xl font-bold mb-6 text-gray-800">
             <i class="fas fa-heartbeat mr-2 text-blue-600"></i> Mis resultados del Día Preventivo
         </h1>
-        ${dateSelectorHTML || ''}
+        ${dateSelectorHTML}
         <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-lg shadow-sm">
             <p class="font-semibold text-blue-700">
                 <i class="fas fa-calendar-alt mr-2"></i> Fecha del Informe Activo: 
@@ -477,7 +495,9 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
 
     // --- BUCLE DE INDICADORES ---
     for (const [key, value] of Object.entries(persona)) {
-        if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'Edad', 'Sexo'].includes(key)) {
+        
+        // ⚠️ CORRECCIÓN AQUÍ: Quitamos 'Edad' y 'Sexo' de la lista para que se muestren
+        if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional'].includes(key)) {
             continue;
         }
 
@@ -490,7 +510,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             continue;
         }
 
-        // --- FILTRO SEXO (Ya lo tenías, lo mantenemos) ---
+        // --- FILTRO SEXO ---
         const keyNormalized = keyUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const terminosFemeninos = ['MAMOGRAFIA', 'ECO_MAMARIA', 'ECO MAMARIA', 'HPV', 'PAP', 'ACIDO FOLICO', 'UTERINO'];
         const terminosMasculinos = ['PROSTATA', 'PSA'];
@@ -498,7 +518,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         if (sexo === 'masculino' && terminosFemeninos.some(t => keyNormalized.includes(t))) continue;
         if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
 
-        // --- 🚀 LLAMADA A LA LÓGICA INTELIGENTE (Pasamos edad y sexo) ---
+        // --- LLAMADA A RIESGOS ---
         const risk = getRiskLevel(key, safeValue, edadPaciente, sexo);
 
         const colorMap = {
@@ -506,7 +526,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700',
             green: 'bg-green-100 border-green-500 text-green-700',
             gray: 'bg-gray-100 border-gray-400 text-gray-600',
-            violet: 'bg-purple-100 border-purple-500 text-purple-700'
+            violet: 'bg-purple-100 border-purple-500 text-purple-700' // Violeta para datos personales
         };
         const iconMap = {
             times: 'fas fa-times-circle',
@@ -516,15 +536,18 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             info: 'fas fa-info-circle',
         };
 
-        // Definimos el mensaje final: Si getRiskLevel nos dio un 'customMsg', usamos ese. Si no, usamos el genérico.
         const mensajeFinal = risk.customMsg 
             ? risk.customMsg 
             : (key.includes('Observaciones') ? safeValue : (risk.text === 'Calma' ? 'Buen estado. ¡A mantener!' : 'Revisar en el informe profesional.'));
 
+        // Fallback color
+        const finalColorClass = colorMap[risk.color] || colorMap['gray'];
+
         dashboardHTML += `
-            <div class="p-4 border-l-4 ${colorMap[risk.color]} rounded-md shadow-sm transition hover:shadow-lg">
+            <div class="p-4 border-l-4 ${finalColorClass} rounded-md shadow-sm transition hover:shadow-lg">
                 <div class="flex items-center justify-between mb-1">
-                    <h3 class="font-bold text-md">${key}</h3> <span class="font-semibold text-sm px-2 py-0.5 rounded-full bg-white border border-gray-200 shadow-sm text-gray-700 whitespace-nowrap ml-2">
+                    <h3 class="font-bold text-md">${key}</h3> 
+                    <span class="font-semibold text-sm px-2 py-0.5 rounded-full bg-white border border-gray-200 shadow-sm text-gray-700 whitespace-nowrap ml-2">
                         ${risk.text}
                     </span>
                 </div>
@@ -540,6 +563,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     dashboardHTML += `</div> </div>`;
     dashboardContenedor.innerHTML = dashboardHTML;
 
+    // Listeners y Botones
     if (allReports.length > 1) {
         document.getElementById('report-date-selector').addEventListener('change', async (event) => {
             const selectedId = event.target.value;
@@ -565,13 +589,11 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
             </button>
-
             <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-share-alt mr-2"></i> Compartir Portal
             </button>
         </div>
     `;
-
     accionesContenedor.innerHTML = accionesHTML;
 }
 function cargarEstudiosTab(estudiosResults) {
