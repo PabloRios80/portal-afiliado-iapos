@@ -213,15 +213,15 @@ async function obtenerLinkEstudios(dni, studyType) {
         };
     }
 }
-
 function getRiskLevel(key, value, edad, sexo) {
     const v = String(value || '').toLowerCase().trim();
     // Normalizamos clave: mayúsculas y sin tildes
     const k = key.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
     
-    // Detectamos si el valor indica que NO se realizó la práctica de forma robusta
-    // Agregamos "no indicado" y validamos que no sea vacío
-    const noRealizado = v.includes('no se realiza') || v.includes('no realizado') || v === 'no' || v.includes('no corresponde') || v === '' || v.includes('no indicado');
+    // Detectamos si el valor indica que NO se realizó (agregamos "no aplica" y "pendiente")
+    const noRealizado = v.includes('no se realiza') || v.includes('no realizado') || v === 'no' || 
+                        v.includes('no corresponde') || v === '' || v.includes('no indicado') || 
+                        v.includes('no aplica') || v.includes('pendiente');
 
     // --- DATOS PERSONALES (VIOLETA) ---
     if (k === 'EDAD' || k === 'SEXO') {
@@ -231,6 +231,35 @@ function getRiskLevel(key, value, edad, sexo) {
     // ==============================================================================
     // 1. REGLAS CLÍNICAS ESPECÍFICAS
     // ==============================================================================
+
+    // --- PRÓSTATA (PSA) ---
+    if (k.includes('PROSTATA') || k.includes('PSA')) {
+        // CASO 1: Si el resultado es NORMAL -> VERDE
+        if (v.includes('normal') || v.includes('bajo') || v.includes('negativo') || v.includes('adecuado')) {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Los valores están dentro de lo normal.' };
+        }
+
+        // CASO 2: Si es "No aplica", "Pendiente", "No realizado"
+        if (noRealizado) {
+            if (edad >= 50) {
+                // Mayor de 50: ROJO
+                return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el control de PSA es fundamental. Te sugerimos realizarlo.' };
+            } else {
+                // Menor de 50: GRIS
+                return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Este estudio se indica generalmente a partir de los 50 años. Por ahora no es necesario.' };
+            }
+        }
+    }
+
+    // --- ALIMENTACIÓN SALUDABLE ---
+    if (k.includes('ALIMENTACION') || k.includes('NUTRICION')) {
+        if (v === 'no' || v.includes('mala') || v.includes('inadecuada')) {
+             return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Se recomienda mejorar hábitos alimenticios e incorporar variedad de nutrientes.' };
+        }
+        if (v === 'si' || v === 'sí' || v.includes('buena')) {
+             return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Muy bien! Mantener una buena alimentación es clave.' };
+        }
+    }
 
     // --- OSTEOPOROSIS ---
     if (k.includes('OSTEOPOROSIS') || k.includes('DENSITOMETRIA') || k.includes('OSEA') || k.includes('DMO')) {
@@ -325,7 +354,7 @@ function getRiskLevel(key, value, edad, sexo) {
         return { color: 'gray', icon: 'info', text: 'Informativo' };
     }
 
-    // --- VERDE (CORREGIDO PARA INCLUIR "SI/SÍ/BUENA") ---
+    // --- VERDE ---
     if (v === 'si' || v === 'sí' || v === 'buena' ||
         v.includes('no presenta') || v.includes('normal') || v.includes('adecuada') || 
         v.includes('no abusa') || v.includes('no se verifica') || v.includes('no fuma') || 
@@ -336,7 +365,8 @@ function getRiskLevel(key, value, edad, sexo) {
     }
 
     // --- ROJO ---
-    if (v.includes('sí presenta') || v.includes('presenta') || v.includes('elevado') || 
+    if (v === 'no' || v === 'No' ||
+        v.includes('sí presenta') || v.includes('presenta') || v.includes('elevado') || 
         v.includes('anormal') || v.includes('alto') || v.includes('no control') || 
         v.includes('no realiza') || v.includes('pendiente') || v.includes('riesgo alto') || 
         v.includes('positivo') || v.includes('incompleto') || v.includes('obesidad') || 
