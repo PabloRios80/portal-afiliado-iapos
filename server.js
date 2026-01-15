@@ -24,11 +24,70 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const REDIRECT_URI = 'http://localhost:3001/oauth2callback';
 
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 const TOKEN_PATH = path.join(__dirname, 'token.json');
 
 // 🚀 INICIALIZACIÓN DE GEMINI (RESTAURADO)
 const ai = new GoogleGenAI({}); 
+
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// CLAVE SECRETA PARA LOS TOKENS (En producción esto va en .env, por ahora ponlo aquí)
+const JWT_SECRET = process.env.JWT_SECRET || 'secreto_super_seguro_iapos_2025';
+
+function getNewToken(oAuth2Client, callback) {
+    const authUrl = oAuth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: SCOPES,
+    });
+    
+    console.log('\n\n=============================================================');
+    console.log('⚠️  ATENCIÓN: NECESITAS AUTORIZAR LA APP  ⚠️');
+    console.log('=============================================================');
+    console.log('Copia y pega este enlace en tu navegador:');
+    console.log('\n' + authUrl + '\n');
+    console.log('=============================================================');
+    console.log('Luego, pega el código que te de Google aquí abajo:');
+
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+    rl.question('Ingresa el código aquí: ', (code) => {
+        rl.close();
+        oAuth2Client.getToken(code, (err, token) => {
+            if (err) return console.error('Error while trying to retrieve access token', err);
+            oAuth2Client.setCredentials(token);
+            // Store the token to disk for later program executions
+            fs.writeFile(TOKEN_PATH, JSON.stringify(token), (err) => {
+                if (err) return console.error(err);
+                console.log('Token almacenado en', TOKEN_PATH);
+                callback(oAuth2Client);
+            });
+        });
+    });
+}
+
+// --- MIDDLEWARE DE AUTENTICACIÓN (EL GUARDIA) ---
+function verificarToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    // El formato suele ser: "Bearer TU_TOKEN_AQUI"
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ error: 'Acceso denegado. Debes iniciar sesión.' });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: 'Token inválido o expirado.' });
+        }
+        // Si el token es válido, guardamos los datos del usuario en la petición
+        req.user = user; 
+        next();
+    });
+}
 
 async function loadTokens() {
     try {
@@ -47,6 +106,153 @@ function saveTokens(tokens) {
     console.log('Tokens guardados en token.json.');
 }
 
+// --- FUNCIONES DE GESTIÓN DE USUARIOS (Hoja 'Usuarios') ---
+
+async function buscarUsuarioPorDNI(dni) {
+    const sheetName = 'Usuarios';
+    // Nota: Usamos la misma lógica de query que ya tienes
+    const query = encodeURIComponent(`select * where A = '${dni}'`);
+    const queryUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${sheetName}&tq=${query}`;
+
+    try {
+        const response = await axios.get(queryUrl);
+        const dataText = response.data.replace(/.*google.visualization.Query.setResponse\((.*)\);/s, '$1');
+        const dataJson = JSON.parse(dataText);
+
+        if (!dataJson.table || dataJson.table.rows.length === 0) return null;
+
+        const row = dataJson.table.rows[0].c;
+        return {
+            dni: row[0]?.v,       // Columna A
+            email: row[1]?.v,     // Columna B
+            password: row[2]?.v,  // Columna C (Hash)
+            rol: row[3]?.v        // Columna D (admin/user)
+        };
+    } catch (error) {
+        console.error('Error buscando usuario:', error);
+        return null;
+    }
+}
+
+// Para guardar un usuario nuevo, necesitamos escribir en el Sheet.
+// IMPORTANTE: La API de 'gviz' (Query) es SOLO LECTURA. 
+// Para escribir (registrar pass), necesitamos usar la API 'sheets' de googleapis que ya tienes configurada.
+async function registrarUsuarioEnSheet(dni, email, passwordHash) {
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+    
+    // Primero chequeamos si ya existe para no duplicar (aunque lo haremos en el endpoint también)
+    const request = {
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'Usuarios!A:D',
+        valueInputOption: 'USER_ENTERED',
+        resource: {
+            values: [[dni, email, passwordHash, 'user']] // Por defecto rol 'user'
+        }
+    };
+
+    try {
+        await sheets.spreadsheets.values.append(request);
+        console.log(`Usuario ${dni} registrado en hoja Usuarios.`);
+        return true;
+    } catch (error) {
+        console.error('Error al guardar en Sheet:', error);
+        return false;
+    }
+}
+// --- RUTAS DE SEGURIDAD (REGISTRO Y LOGIN) ---
+
+// 1. REGISTRO (Crear Contraseña por primera vez)
+app.post('/api/auth/registro', async (req, res) => {
+    const { dni, email, password } = req.body;
+    
+    // Validar que el DNI exista en el padrón (Hoja Integrado)
+    // (Opcional: aquí podrías verificar si el afiliado realmente existe antes de dejarlo crear cuenta)
+
+    const usuarioExistente = await buscarUsuarioPorDNI(dni);
+    if (usuarioExistente) {
+        return res.status(400).json({ error: 'Este DNI ya tiene una cuenta creada.' });
+    }
+
+    // Encriptar contraseña
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(password, salt);
+
+    // Guardar en Google Sheets
+    const exito = await registrarUsuarioEnSheet(dni, email, hash);
+    
+    if (exito) {
+        res.json({ message: 'Cuenta creada con éxito. Ahora puedes iniciar sesión.' });
+    } else {
+        res.status(500).json({ error: 'Error al guardar el usuario.' });
+    }
+});
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { dni, password } = req.body;
+        console.log(`Intentando login para DNI: ${dni}`);
+
+        // 1. Configuración para buscar en Google Sheets
+        const sheetName = 'Usuarios'; 
+        // Asumiendo DNI en Columna A
+        const query = encodeURIComponent(`select * where A = '${dni}'`); 
+        
+        // Obtener credenciales frescas
+        const accessToken = (await oauth2Client.getAccessToken()).token;
+        const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}&tq=${query}`;
+
+        // Hacemos la petición a Google
+        const response = await axios.get(url, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        // Limpieza de datos (Google devuelve texto basura al principio)
+        const dataText = response.data.replace(/.*google.visualization.Query.setResponse\((.*)\);/s, '$1');
+        const dataJson = JSON.parse(dataText);
+
+        // Si la tabla está vacía, el usuario no existe
+        if (!dataJson.table || dataJson.table.rows.length === 0) {
+            return res.status(400).json({ error: 'DNI no encontrado o formato incorrecto en Excel' });
+        }
+
+        // 2. Extraer datos del usuario (Columna A=0, B=1, C=2)
+        const row = dataJson.table.rows[0];
+        const hashGuardado = row.c[1]?.v; // Columna B (Password Encriptado)
+        
+        // CORRECCIÓN CLAVE: Leemos la Columna C (Rol) y la limpiamos
+        let rolLeido = row.c[2]?.v; // Columna C
+        
+        // Normalizamos: Si es nulo es 'user', convertimos a minúsculas y quitamos espacios
+        const rolUsuario = rolLeido ? String(rolLeido).toLowerCase().trim() : 'user';
+
+        if (!hashGuardado) {
+            return res.status(400).json({ error: 'Usuario sin contraseña configurada' });
+        }
+
+        // 3. Comparar contraseña escrita vs la del Excel (bcrypt)
+        const coincide = await bcrypt.compare(password, hashGuardado);
+
+        if (coincide) {
+            // ¡ÉXITO!
+            console.log(`Login exitoso: ${dni} es rol: ${rolUsuario}`);
+            
+            res.json({ 
+                success: true, 
+                message: 'Login correcto',
+                token: 'token_simulado_123', // Token temporal
+                usuario: { 
+                    dni: dni, 
+                    rol: rolUsuario // <--- ¡AQUÍ ESTÁ LA MAGIA! Enviamos el rol limpio
+                }
+            });
+        } else {
+            res.status(400).json({ error: 'Contraseña incorrecta' });
+        }
+
+    } catch (error) {
+        console.error('Error en el servidor:', error);
+        res.status(500).json({ error: 'Error interno del servidor' });
+    }
+});
 // --- RUTAS DE AUTENTICACIÓN ---
 app.get('/auth', (req, res) => {
     const authUrl = oauth2Client.generateAuthUrl({
@@ -138,39 +344,69 @@ function procesarYObtenerUltimo(rows, cols) {
         reports: sortedRecords 
     };
 }
-
-// --- RUTA DE BÚSQUEDA ---
 app.post('/api/buscar-datos', async (req, res) => {
     try {
-        const dniBuscado = req.body.dni.trim();
-        const sheetName = 'Integrado'; 
-        const query = encodeURIComponent(`select * where C = '${dniBuscado}'`); 
-        const queryUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}&tq=${query}`;
+        // 1. 🕵️‍♂️ DIAGNÓSTICO: Ver qué nos envía el Frontend
+        console.log("------------------------------------------------");
+        console.log("📥 Petición recibida en /api/buscar-datos");
+        console.log("📦 Datos del cuerpo (body):", req.body);
+        
+        const { dniBuscado, usuarioSolicitante } = req.body;
 
-        console.log(`Consultando API de Query para DNI: ${dniBuscado}...`);
-        const response = await axios.get(queryUrl);
+        // 2. 🛡️ SEGURIDAD: Validar que sepamos quién pregunta
+        if (!usuarioSolicitante) {
+            console.error("❌ ERROR CRÍTICO: 'usuarioSolicitante' es undefined.");
+            return res.status(400).json({ error: 'Error de seguridad: No se identificó al usuario solicitante.' });
+        }
+
+        console.log(`👤 Solicita: ${usuarioSolicitante.rol} (DNI: ${usuarioSolicitante.dni})`);
+        console.log(`🔎 Busca a: ${dniBuscado}`);
+
+        // 3. 🔐 PERMISOS: El candado lógico
+        // Normalizamos el rol a minúsculas por si acaso
+        const rolUsuario = String(usuarioSolicitante.rol).toLowerCase();
+
+        if (rolUsuario !== 'admin') {
+            // Si NO es admin, solo puede ver sus propios datos
+            // Convertimos ambos a texto para evitar errores de número vs texto
+            if (String(usuarioSolicitante.dni) !== String(dniBuscado)) {
+                console.warn("⛔ Acceso prohibido: Usuario intentó ver otro DNI");
+                return res.status(403).json({ error: 'Acceso denegado: No tienes permiso para ver este informe.' });
+            }
+        }
+
+        // 4. 🚀 BÚSQUEDA EN GOOGLE SHEETS (Si pasó la seguridad)
+        const sheetName = 'Integrado';
+        const query = encodeURIComponent(`select * where C = '${dniBuscado}'`);
+        
+        const accessToken = (await oauth2Client.getAccessToken()).token;
+        const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}&tq=${query}`;
+
+        const response = await axios.get(url, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
         const dataText = response.data.replace(/.*google.visualization.Query.setResponse\((.*)\);/s, '$1');
         const dataJson = JSON.parse(dataText);
 
-        if (dataJson.errors || !dataJson.table || dataJson.table.rows.length === 0) {
-            return res.status(404).json({ message: 'No se encontraron datos.' });
-        }
-
-        const { reportePrincipal, historialFechas, reports } = procesarYObtenerUltimo(dataJson.table.rows, dataJson.table.cols);
-
-        if (!reportePrincipal) {
-            return res.status(404).json({ message: 'No se pudo procesar el informe.' });
-        }
-
-        res.json({ 
-            persona: reportePrincipal, 
-            historialFechas: historialFechas, 
-            reports: reports 
+        // Procesar datos (igual que siempre)...
+        const rows = dataJson.table.rows;
+        const reports = rows.map(row => {
+            const rowData = {};
+            dataJson.table.cols.forEach((col, index) => {
+                if (col.label) {
+                    rowData[col.label] = row.c[index] ? row.c[index].v : '';
+                }
+            });
+            return rowData;
         });
 
+        console.log(`✅ Resultados encontrados: ${reports.length}`);
+        res.json({ reports });
+
     } catch (error) {
-        console.error('Error:', error.message);
-        res.status(500).json({ error: 'Error interno del servidor.' });
+        console.error('🔥 Error fatal en el servidor:', error);
+        res.status(500).json({ error: 'Error interno del servidor al procesar la solicitud.' });
     }
 });
 

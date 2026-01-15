@@ -1,154 +1,260 @@
-/*
- * Script de Lógica Principal del Portal de Afiliados
- * Maneja la interacción con la hoja de cálculo de Google Sheets (a través del servidor)
- * y la llamada a la API de Gemini para el análisis de informes.
- *
- * * MODIFICACIONES CRÍTICAS APLICADAS:
- * 1. Implementación de un selector de fecha dentro de la pestaña "Día Preventivo".
- * 2. Se almacena el historial completo de informes en la variable global `allReports`.
- * 3. Se agregó la función `updateDashboardContent` para manejar el cambio de informe por fecha.
- * 4. El selector de fecha (historial) se movió al inicio de la pestaña "Día Preventivo".
- * 5. Se agregó la fecha del último estudio complementario cargado en la tarjeta de la pestaña Estudios Complementarios.
- * 6. Limpieza quirúrgica de indicadores técnicos (RAWDATE) en el Dashboard.
- * 7. FILTRO DE SEXO: Oculta estudios femeninos si el paciente es Masculino.
- */
-
 // --- Variables Globales ---
 const ESTUDIOS_API_URL = window.ESTUDIOS_API_URL || 'http://localhost:4000';
 const API_BASE_PATH = '/api';
-
+// Variable global para guardar quién entró
+let usuarioActual = null;
 let allReports = [];
 let cachedEstudiosResults = {};
 
-// 1. CONFIGURACIÓN INICIAL (DOMContentLoaded)
+// --- VARIABLES DE AUTENTICACIÓN ---
+let authToken = localStorage.getItem('iapos_token'); // Intentamos recuperar sesión
+let currentUser = JSON.parse(localStorage.getItem('iapos_user'));
+
 // ==============================================================================
-document.addEventListener('DOMContentLoaded', () => {
-    const btnVerPortal = document.getElementById('btn-ver-portal');
+// GESTIÓN DE UI LOGIN / REGISTRO
+// ==============================================================================
 
-    if (btnVerPortal) {
-        btnVerPortal.addEventListener('click', async () => {
-            const { value: dni } = await Swal.fire({
-                title: 'Ingresa tu DNI',
-                input: 'text',
-                inputLabel: 'Tu número de documento (sin puntos)',
-                inputPlaceholder: 'Ej: 12345678',
-                showCancelButton: true,
-                confirmButtonText: 'Ver mis resultados',
-                inputValidator: (value) => {
-                    if (!value || isNaN(value)) {
-                        return 'Por favor, ingresa un DNI válido.';
-                    }
-                }
+function mostrarLogin() {
+    document.getElementById('auth-modal').classList.remove('hidden');
+    document.getElementById('form-login').classList.remove('hidden');
+    document.getElementById('form-registro').classList.add('hidden');
+}
+
+function mostrarRegistro() {
+    document.getElementById('auth-modal').classList.remove('hidden');
+    document.getElementById('form-login').classList.add('hidden');
+    document.getElementById('form-registro').classList.remove('hidden');
+}
+
+function cerrarAuthModal() {
+    document.getElementById('auth-modal').classList.add('hidden');
+}
+
+// ==============================================================================
+// LÓGICA DE REGISTRO
+// ==============================================================================
+const btnReg = document.getElementById('btn-reg-submit');
+if (btnReg) {
+    btnReg.addEventListener('click', async () => {
+        const dni = document.getElementById('reg-dni').value.trim();
+        const email = document.getElementById('reg-email').value.trim();
+        const password = document.getElementById('reg-pass').value.trim();
+
+        if (!dni || !email || !password) {
+            Swal.fire('Faltan datos', 'Por favor completa todos los campos.', 'warning');
+            return;
+        }
+
+        Swal.showLoading();
+        try {
+            const response = await fetch('/api/auth/registro', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dni, email, password })
             });
+            const data = await response.json();
 
-            if (dni) {
-                Swal.fire({
-                    title: 'Buscando tu informe...',
-                    text: 'Recuperando datos, generando análisis de IA y buscando estudios complementarios.',
-                    allowOutsideClick: false,
-                    didOpen: () => {
-                        Swal.showLoading();
-                    }
-                });
-
-                try {
-                    const response = await fetch('/api/buscar-datos', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ dni: dni.trim() })
-                    });
-
-                    const dataResult = await response.json();
-
-                    if (!response.ok) {
-                        throw new Error(dataResult.error || 'Error desconocido al buscar datos.');
-                    }
-
-                    let reports = dataResult.reports;
-
-                    if (!reports || reports.length === 0) {
-                        if (dataResult.persona) {
-                            reports = [dataResult.persona];
-                        } else {
-                            Swal.fire('No Encontrado', 'No se encontraron resultados para el DNI ingresado.', 'error');
-                            return;
-                        }
-                    }
-
-                    const sortedReports = [...reports].sort((a, b) => {
-                        const parseDate = (dateStr) => {
-                            const parts = dateStr.split('/');
-                            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-                        };
-
-                        const dateA = parseDate(a.FECHAX || "01/01/1970");
-                        const dateB = parseDate(b.FECHAX || "01/01/1970");
-                        return dateB - dateA;
-                    });
-
-                    const selectedReport = sortedReports[0];
-
-                    allReports = sortedReports;
-                    
-                    const personaData = selectedReport;
-                    const dniToSearch = personaData.DNI;
-
-                    const [
-                        resumenAI,
-                        labResult,
-                        mamografiaResult,
-                        ecografiaResult,
-                        ecomamariaResult,
-                        espirometriaResult,
-                        enfermeriaResult,
-                        densitometriaResult,
-                        vccResult,
-                        oftalmologiaResult,
-                        odontologiaResult,
-                        biopsiaResult
-                    ] = await Promise.all([
-                        obtenerResumenAI(personaData),
-                        obtenerLinkEstudios(dniToSearch, 'laboratorio'),
-                        obtenerLinkEstudios(dniToSearch, 'mamografia'),
-                        obtenerLinkEstudios(dniToSearch, 'ecografia'),
-                        obtenerLinkEstudios(dniToSearch, 'ecomamaria'),
-                        obtenerLinkEstudios(dniToSearch, 'espirometria'),
-                        obtenerLinkEstudios(dniToSearch, 'enfermeria'),
-                        obtenerLinkEstudios(dniToSearch, 'densitometria'),
-                        obtenerLinkEstudios(dniToSearch, 'vcc'),
-                        obtenerLinkEstudios(dniToSearch, 'oftalmologia'),
-                        obtenerLinkEstudios(dniToSearch, 'odontologia'),
-                        obtenerLinkEstudios(dniToSearch, 'biopsia')
-                    ]);
-
-                    const estudiosResults = {
-                        laboratorio: labResult,
-                        mamografia: mamografiaResult,
-                        ecografia: ecografiaResult,
-                        ecomamaria: ecomamariaResult,
-                        espirometria: espirometriaResult,
-                        enfermeria: enfermeriaResult,
-                        densitometria: densitometriaResult,
-                        vcc: vccResult,
-                        oftalmologia: oftalmologiaResult,
-                        odontologia: odontologiaResult,
-                        biopsia: biopsiaResult
-                    };
-                    
-                    cachedEstudiosResults = estudiosResults;
-
-                    cargarPortalPersonal(personaData, resumenAI);
-
-                    Swal.close();
-
-                } catch (error) {
-                    console.error('Error en el proceso de búsqueda:', error);
-                    Swal.fire('Error del Sistema', 'Hubo un problema al buscar o analizar tu informe. Intenta más tarde.', 'error');
-                }
+            if (response.ok) {
+                Swal.fire('¡Éxito!', data.message, 'success');
+                mostrarLogin(); // Llevamos al usuario al login
+            } else {
+                Swal.fire('Error', data.error || 'No se pudo registrar.', 'error');
             }
+        } catch (error) {
+            Swal.fire('Error', 'Error de conexión con el servidor.', 'error');
+        }
+    });
+}
+// ==============================================================================
+// LÓGICA DE LOGIN
+// ==============================================================================
+const btnLogin = document.getElementById('btn-login-submit');
+if (btnLogin) {
+    btnLogin.addEventListener('click', async () => {
+        const dni = document.getElementById('login-dni').value.trim();
+        const password = document.getElementById('login-pass').value.trim();
+
+        if (!dni || !password) {
+            Swal.fire('Atención', 'Ingresa DNI y contraseña.', 'warning');
+            return;
+        }
+
+        Swal.showLoading();
+        try {
+            const response = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dni, password })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                // Guardar sesión
+                localStorage.setItem('iapos_token', data.token);
+                localStorage.setItem('iapos_user', JSON.stringify(data.usuario));
+                authToken = data.token;
+                currentUser = data.usuario;
+
+                Swal.close();
+                cerrarAuthModal(); // Cierra el modal de login
+
+                // LÓGICA DE ROLES MEJORADA
+                if (currentUser.rol === 'admin') {
+                    // SI ES ADMIN: ¡Abrir buscador DIRECTAMENTE!
+                    const searchContainer = document.getElementById('search-container');
+                    if (searchContainer) {
+                        searchContainer.style.display = 'flex'; // Usamos flex para centrar
+                        document.getElementById('dni-input').focus(); // Poner el cursor listo para escribir
+                    }
+                    // Ocultamos vista inicial
+                    const vistaInicial = document.getElementById('vista-inicial');
+                    if(vistaInicial) vistaInicial.style.display = 'none';
+
+                } else {
+                    // SI ES USUARIO: Cargar sus datos
+                    if(document.getElementById('search-container')) {
+                        document.getElementById('search-container').style.display = 'none';
+                    }
+                    iniciarPortal(currentUser.dni);
+                }
+            } else {
+                Swal.fire('Acceso Denegado', data.error, 'error');
+            }
+        } catch (error) {
+            console.error(error);
+            Swal.fire('Error', 'No se pudo conectar al servidor.', 'error');
+        }
+    });
+}
+// ==============================================================================
+// FUNCIÓN PRINCIPAL DE CARGA (SEGURA CON TOKEN)
+// ==============================================================================
+async function iniciarPortal(dniParaBuscar) {
+    Swal.fire({
+        title: 'Ingresando...',
+        text: 'Autenticando y recuperando historial médico...',
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading()
+    });
+
+    try {
+        // 1. Aseguramos que currentUser tenga datos
+        if (!currentUser) {
+            currentUser = JSON.parse(localStorage.getItem('iapos_user'));
+        }
+
+        // 2. Si sigue sin haber usuario, paramos para evitar error
+        if (!currentUser) {
+            throw new Error('No se identificó la sesión. Por favor ingresa de nuevo.');
+        }
+
+        const response = await fetch('/api/buscar-datos', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}` 
+            },
+            // 👇👇 AQUÍ ESTÁ EL CAMBIO QUE NECESITAS 👇👇
+            body: JSON.stringify({ 
+                dniBuscado: dniParaBuscar,      
+                usuarioSolicitante: currentUser // <--- ¡ESTA ES LA LÍNEA MÁGICA!
+            })
+            // 👆👆 SIN ESTO, EL SERVIDOR FALLA 👆👆
         });
+
+        const dataResult = await response.json();
+
+        // ... (El resto del código sigue igual) ...
+        
+        if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+                localStorage.removeItem('iapos_token');
+                Swal.fire('Atención', dataResult.error || 'Sesión expirada.', 'warning');
+                return;
+            }
+            throw new Error(dataResult.error || 'Error al buscar datos.');
+        }
+
+        // Procesamiento de reportes
+        let reports = dataResult.reports;
+        if (!reports || reports.length === 0) {
+            if (dataResult.persona) reports = [dataResult.persona];
+            else { 
+                Swal.fire('Sin Datos', 'No hay registros para este DNI.', 'info'); 
+                return; 
+            }
+        }
+
+        // Ordenar y seleccionar (Tu lógica original)
+        const sortedReports = [...reports].sort((a, b) => {
+            const parseDate = (dateStr) => {
+                if(!dateStr) return new Date(0);
+                const parts = dateStr.split('/');
+                return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+            };
+            return parseDate(b.FECHAX) - parseDate(a.FECHAX);
+        });
+
+        allReports = sortedReports;
+        const selectedReport = sortedReports[0];
+        const dniToSearch = selectedReport.DNI;
+
+        // Carga de estudios (Tu lógica original)
+        const [
+            resumenAI, labResult, mamografiaResult, ecografiaResult, ecomamariaResult,
+            espirometriaResult, enfermeriaResult, densitometriaResult,
+            vccResult, oftalmologiaResult, odontologiaResult, biopsiaResult
+        ] = await Promise.all([
+            obtenerResumenAI(selectedReport),
+            obtenerLinkEstudios(dniToSearch, 'laboratorio'),
+            obtenerLinkEstudios(dniToSearch, 'mamografia'),
+            obtenerLinkEstudios(dniToSearch, 'ecografia'),
+            obtenerLinkEstudios(dniToSearch, 'ecomamaria'),
+            obtenerLinkEstudios(dniToSearch, 'espirometria'),
+            obtenerLinkEstudios(dniToSearch, 'enfermeria'),
+            obtenerLinkEstudios(dniToSearch, 'densitometria'),
+            obtenerLinkEstudios(dniToSearch, 'vcc'),
+            obtenerLinkEstudios(dniToSearch, 'oftalmologia'),
+            obtenerLinkEstudios(dniToSearch, 'odontologia'),
+            obtenerLinkEstudios(dniToSearch, 'biopsia')
+        ]);
+
+        cachedEstudiosResults = {
+            laboratorio: labResult, mamografia: mamografiaResult, ecografia: ecografiaResult,
+            ecomamaria: ecomamariaResult, espirometria: espirometriaResult, enfermeria: enfermeriaResult,
+            densitometria: densitometriaResult, vcc: vccResult, oftalmologia: oftalmologiaResult,
+            odontologia: odontologiaResult, biopsia: biopsiaResult
+        };
+        // Cargar UI
+        cargarPortalPersonal(selectedReport, resumenAI);
+        
+        // Ocultar vista inicial
+        const vistaInicial = document.getElementById('vista-inicial');
+        if(vistaInicial) vistaInicial.style.display = 'none';
+
+        // --- MANEJO DE ADMIN UI ---
+        // 1. Ocultar el buscador grande (porque ya encontramos al paciente)
+        const searchContainer = document.getElementById('search-container');
+        if (searchContainer) searchContainer.style.display = 'none';
+
+        // 2. Si soy admin, mostrar el botón flotante "Buscar Otro"
+        if (currentUser && currentUser.rol === 'admin') {
+            const btnNueva = document.getElementById('btn-nueva-busqueda');
+            if (btnNueva) btnNueva.style.display = 'block';
+        }
+
+        Swal.close();
+
+    } catch (error) {
+        console.error(error);
+        Swal.fire('Error', error.message, 'error');
+    }
+}
+
+// CHECKEO DE SESIÓN AL INICIO
+document.addEventListener('DOMContentLoaded', () => {
+    // Si ya hay token guardado, podemos intentar loguear directo o mostrar botón "Ir a mi portal"
+    if (authToken && currentUser) {
+        console.log("Sesión detectada para:", currentUser.dni);
     }
 });
 
@@ -213,12 +319,12 @@ async function obtenerLinkEstudios(dni, studyType) {
         };
     }
 }
+
 function getRiskLevel(key, value, edad, sexo) {
     const v = String(value || '').toLowerCase().trim();
-    // Normalizamos clave: mayúsculas y sin tildes
     const k = key.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
     
-    // Detectamos si el valor indica que NO se realizó (agregamos "no aplica" y "pendiente")
+    // Detectamos si el valor indica que NO se realizó
     const noRealizado = v.includes('no se realiza') || v.includes('no realizado') || v === 'no' || 
                         v.includes('no corresponde') || v === '' || v.includes('no indicado') || 
                         v.includes('no aplica') || v.includes('pendiente');
@@ -238,14 +344,11 @@ function getRiskLevel(key, value, edad, sexo) {
         if (v.includes('normal') || v.includes('bajo') || v.includes('negativo') || v.includes('adecuado')) {
             return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Los valores están dentro de lo normal.' };
         }
-
         // CASO 2: Si es "No aplica", "Pendiente", "No realizado"
         if (noRealizado) {
             if (edad >= 50) {
-                // Mayor de 50: ROJO
                 return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el control de PSA es fundamental. Te sugerimos realizarlo.' };
             } else {
-                // Menor de 50: GRIS
                 return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Este estudio se indica generalmente a partir de los 50 años. Por ahora no es necesario.' };
             }
         }
@@ -254,10 +357,10 @@ function getRiskLevel(key, value, edad, sexo) {
     // --- ALIMENTACIÓN SALUDABLE ---
     if (k.includes('ALIMENTACION') || k.includes('NUTRICION')) {
         if (v === 'no' || v.includes('mala') || v.includes('inadecuada')) {
-             return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Se recomienda mejorar hábitos alimenticios e incorporar variedad de nutrientes.' };
+            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Se recomienda mejorar hábitos alimenticios e incorporar variedad de nutrientes.' };
         }
         if (v === 'si' || v === 'sí' || v.includes('buena')) {
-             return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Muy bien! Mantener una buena alimentación es clave.' };
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Muy bien! Mantener una buena alimentación es clave.' };
         }
     }
 
@@ -299,13 +402,13 @@ function getRiskLevel(key, value, edad, sexo) {
 
     // --- CÁNCER DE MAMA ---
     if (k.includes('MAMOGRAFIA') || k.includes('MAMOGRAFÍA') || k.includes('ECO MAMARIA')) {
-         if (noRealizado) {
+        if (noRealizado) {
             if (edad >= 40) {
-                 return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 40 años para la detección temprana.' };
+                return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 40 años para la detección temprana.' };
             } else {
-                 return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 40 años.' };
+                return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 40 años.' };
             }
-         }
+        }
     }
 
     // --- SOMF / COLON ---
@@ -385,6 +488,7 @@ function getRiskLevel(key, value, edad, sexo) {
 
     return { color: 'gray', icon: 'question', text: 'Sin Dato' };
 }
+
 // ==============================================================================
 // 3. FUNCIONES DEL PORTAL PERSONAL DE SALUD (Dashboard y Pestañas)
 // ==============================================================================
@@ -526,7 +630,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     // --- BUCLE DE INDICADORES ---
     for (const [key, value] of Object.entries(persona)) {
         
-        // ⚠️ CORRECCIÓN AQUÍ: Quitamos 'Edad' y 'Sexo' de la lista para que se muestren
+        // ⚠️ DEJAMOS EDAD Y SEXO VISIBLES (violetas)
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional'].includes(key)) {
             continue;
         }
@@ -626,76 +730,12 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     `;
     accionesContenedor.innerHTML = accionesHTML;
 }
+
 function cargarEstudiosTab(estudiosResults) {
     const contenedor = document.getElementById('estudios-complementarios-lista');
     if (!contenedor) return;
     
     const sexo = window.pacienteSexo;
-    const estudiosConfig = [
-        { nombre: 'Laboratorio', key: 'laboratorio' },
-        { nombre: 'Mamografía', key: 'mamografia', femenino: true },
-        { nombre: 'Ecografía', key: 'ecografia' },
-        { nombre: 'Eco Mamaria', key: 'ecomamaria', femenino: true },
-        { nombre: 'Espirometría', key: 'espirometria' },
-        { nombre: 'Densitometría', key: 'densitometria' },
-        { nombre: 'VCC', key: 'vcc' }
-    ];
-
-    let html = '';
-    estudiosConfig.forEach(e => {
-        // FILTRO QUIRÚRGICO EN PESTAÑA ESTUDIOS
-        if (sexo === 'masculino' && e.femenino) return;
-
-        const res = estudiosResults[e.key];
-        const link = res && res.link;
-        const fecha = res && res.fechaResultado ? ` (${res.fechaResultado})` : '';
-        
-        html += `
-            <div class="flex justify-between items-center p-4 border-b hover:bg-gray-50">
-                <span class="font-semibold text-gray-700">${e.nombre}${fecha}</span>
-                ${link ? `<a href="${link}" target="_blank" class="bg-blue-600 text-white px-4 py-1 rounded shadow">VER</a>` : `<span class="text-gray-400 italic">Pendiente</span>`}
-            </div>
-        `;
-    });
-    contenedor.innerHTML = html;
-}
-
-async function updateDashboardContent(reportId) {
-    const newReport = allReports.find(r => (r.ID || r.FECHAX) === reportId);
-
-    if (!newReport) {
-        Swal.fire('Error', 'No se encontró el informe para la fecha seleccionada.', 'error');
-        return;
-    }
-
-    Swal.fire({
-        title: 'Cargando informe anterior...',
-        text: `Recuperando datos del ${newReport.FECHAX} y re-generando análisis de IA.`,
-        allowOutsideClick: false,
-        didOpen: () => {
-            Swal.showLoading();
-        }
-    });
-
-    try {
-        const resumenAI = await obtenerResumenAI(newReport);
-        cargarDiaPreventivoTab(newReport, resumenAI);
-        mostrarPestana('tab-dia-preventivo'); 
-        Swal.close();
-        window.scrollTo(0, 0);
-
-    } catch (error) {
-        console.error('Error al actualizar el informe histórico:', error);
-        Swal.fire('Error', 'Hubo un problema al cargar el informe histórico.', 'error');
-    }
-}
-
-function cargarEstudiosTab(estudiosResults) {
-    const contenedor = document.getElementById('estudios-complementarios-lista');
-    if (!contenedor) return;
-
-    const sexo = window.pacienteSexo;
-
     const estudiosMaestros = [
         { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', key: 'laboratorio' },
         { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia', soloMujeres: true },
@@ -717,7 +757,7 @@ function cargarEstudiosTab(estudiosResults) {
     estudiosMaestros.forEach(estudio => {
         // FILTRO QUIRÚRGICO DE SEXO
         if (sexo === 'masculino' && estudio.soloMujeres) {
-            return; // No renderiza la tarjeta si es masculino y el estudio es femenino
+            return; 
         }
 
         const result = estudiosResults[estudio.key];
@@ -977,4 +1017,50 @@ function copyCurrentUrl() {
     } finally {
         document.body.removeChild(el);
     }
+}
+// =======================================================
+// LÓGICA DE INTERFAZ DE ADMINISTRADOR
+// =======================================================
+
+// 1. Botón "BUSCAR" (El del cuadro grande)
+const btnBuscar = document.getElementById('btn-buscar');
+const inputBuscar = document.getElementById('dni-input');
+
+if (btnBuscar && inputBuscar) {
+    // Buscar al hacer clic
+    btnBuscar.addEventListener('click', () => {
+        const dniEscrito = inputBuscar.value.trim();
+        if (dniEscrito) {
+            iniciarPortal(dniEscrito);
+        } else {
+            Swal.fire('Atención', 'Escribe un DNI para buscar.', 'warning');
+        }
+    });
+
+    // Buscar al presionar ENTER
+    inputBuscar.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            btnBuscar.click();
+        }
+    });
+}
+
+// 2. Botón flotante "BUSCAR OTRO PACIENTE"
+const btnNuevaBusqueda = document.getElementById('btn-nueva-busqueda');
+if (btnNuevaBusqueda) {
+    btnNuevaBusqueda.addEventListener('click', () => {
+        // Volvemos a mostrar el buscador grande
+        document.getElementById('search-container').style.display = 'flex';
+        // Limpiamos el campo para el nuevo DNI
+        document.getElementById('dni-input').value = '';
+        document.getElementById('dni-input').focus();
+    });
+}
+
+// 3. Botón "X" para cerrar buscador (por si te arrepientes)
+const btnCerrarBusqueda = document.getElementById('btn-cerrar-busqueda');
+if (btnCerrarBusqueda) {
+    btnCerrarBusqueda.addEventListener('click', () => {
+        document.getElementById('search-container').style.display = 'none';
+    });
 }
