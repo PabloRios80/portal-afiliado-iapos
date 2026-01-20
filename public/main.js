@@ -224,6 +224,7 @@ async function iniciarPortal(dniParaBuscar) {
             densitometria: densitometriaResult, vcc: vccResult, oftalmologia: oftalmologiaResult,
             odontologia: odontologiaResult, biopsia: biopsiaResult
         };
+
         // Cargar UI
         cargarPortalPersonal(selectedReport, resumenAI);
         
@@ -257,33 +258,15 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log("Sesión detectada para:", currentUser.dni);
     }
 });
-
 // ==============================================================================
 // 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO
 // ==============================================================================
-
 async function obtenerResumenAI(persona) {
-    try {
-        const response = await fetch('/api/analizar-informe', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ persona: persona })
-        });
-
-        const result = await response.json();
-
-        if (response.ok && result.resumen) {
-            return result.resumen;
-        } else {
-            console.error('Error al generar resumen AI:', result.error);
-            return `ERROR del servidor: La IA no pudo generar el resumen. ${result.error || 'Verifica la conexión.'}`;
-        }
-    } catch (error) {
-        console.error('Fallo de red al llamar a la IA:', error);
-        return 'ERROR CRÍTICO DE GEMINI: Fallo de red o tiempo de espera agotado al contactar la IA.';
+    const textoGuardado = persona['REPORTE_MEDICO']; 
+    if (textoGuardado && textoGuardado.trim().length > 10) {
+        return textoGuardado;
     }
+    return null; // Esto es vital para que aparezca el botón
 }
 
 async function obtenerLinkEstudios(dni, studyType) {
@@ -546,13 +529,11 @@ function mostrarPestana(tabId) {
         activeBtn.classList.remove('text-gray-700', 'hover:bg-gray-100');
     }
 }
-
 // ==============================================================================
-// 4. CONTENIDO DE LAS PESTAÑAS
+// 4. CONTENIDO DE LAS PESTAÑAS (VERSIÓN CON ADMIN TOOLS)
 // ==============================================================================
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
-    const dni = persona['DNI'] || 'N/A';
     const fechaInforme = persona['FECHAX'] || 'N/A';
     
     // --- OBTENCIÓN DE EDAD SEGURA ---
@@ -567,20 +548,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
 
-    let resumenAILimpio = resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
-    let summaryContent;
-
-    if (!resumenAI || resumenAI.includes("ERROR CRÍTICO DE GEMINI") || resumenAI.includes("ERROR del servidor")) {
-        summaryContent = `
-            <div class="p-4 bg-red-100 border-l-4 border-red-500 rounded-lg shadow-sm">
-                <strong class="text-red-700">❌ Error en el Resumen de IA:</strong> 
-                Hubo un problema al contactar o procesar la respuesta de la Inteligencia Artificial.
-            </div>
-        `;
-    } else {
-        summaryContent = `<p class="text-base leading-relaxed">${resumenAILimpio}</p>`;
-    }
-
+    // 1. SELECTOR DE FECHAS (Historial)
     let dateSelectorHTML = ''; 
     if (allReports.length > 1) { 
         const dateOptions = allReports.map(report => {
@@ -605,6 +573,8 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         `;
     }
 
+    // 2. CONSTRUCCIÓN DEL HTML BASE
+    // NOTA: En lugar de pegar el resumen directo, ponemos un DIV vacío con ID "ai-summary-dynamic"
     let dashboardHTML = `
         <h1 class="text-2xl font-bold mb-6 text-gray-800">
             <i class="fas fa-heartbeat mr-2 text-blue-600"></i> Mis resultados del Día Preventivo
@@ -617,34 +587,31 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
                 ${edadPaciente > 0 ? `<span class="ml-4 text-sm text-gray-600">(Edad registrada: ${edadPaciente} años)</span>` : ''}
             </p>
         </div>
+
         <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
             <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Tu Resumen de Salud (Generado por IA)</h2>
-            <div class="prose max-w-none p-4 bg-gray-50 mb-6 rounded-lg border">
-                ${summaryContent}
-            </div>
-
+            
+            <div id="ai-summary-dynamic" class="mb-6 rounded-lg">
+                </div>
             <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Detalle de Indicadores</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     `;
 
-    // --- BUCLE DE INDICADORES ---
+    // 3. BUCLE DE INDICADORES (TARJETAS DE COLORES)
     for (const [key, value] of Object.entries(persona)) {
-        
-        // ⚠️ DEJAMOS EDAD Y SEXO VISIBLES (violetas)
-        if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional'].includes(key)) {
+        if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'REPORTE_MEDICO'].includes(key)) {
             continue;
         }
 
         const safeValue = String(value || '');
         const keyUpper = key.toUpperCase();
+        
+        // Filtros de fechas y vacíos
         const isRawDate = keyUpper === 'RAWDATE' || safeValue.includes('RAWDATE');
         const isIsoDate = safeValue.includes('T') && safeValue.includes('Z') && safeValue.length > 15;
+        if (isRawDate || isIsoDate || safeValue.trim() === '') continue;
 
-        if (isRawDate || isIsoDate || safeValue.trim() === '') {
-            continue;
-        }
-
-        // --- FILTRO SEXO ---
+        // Filtro Sexo
         const keyNormalized = keyUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const terminosFemeninos = ['MAMOGRAFIA', 'ECO_MAMARIA', 'ECO MAMARIA', 'HPV', 'PAP', 'ACIDO FOLICO', 'UTERINO'];
         const terminosMasculinos = ['PROSTATA', 'PSA'];
@@ -652,30 +619,22 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         if (sexo === 'masculino' && terminosFemeninos.some(t => keyNormalized.includes(t))) continue;
         if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
 
-        // --- LLAMADA A RIESGOS ---
+        // Riesgos
         const risk = getRiskLevel(key, safeValue, edadPaciente, sexo);
-
         const colorMap = {
             red: 'bg-red-100 border-red-500 text-red-700',
             yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700',
             green: 'bg-green-100 border-green-500 text-green-700',
             gray: 'bg-gray-100 border-gray-400 text-gray-600',
-            violet: 'bg-purple-100 border-purple-500 text-purple-700' // Violeta para datos personales
+            violet: 'bg-purple-100 border-purple-500 text-purple-700'
         };
         const iconMap = {
-            times: 'fas fa-times-circle',
-            exclamation: 'fas fa-exclamation-triangle',
-            check: 'fas fa-check-circle',
-            question: 'fas fa-question-circle',
-            info: 'fas fa-info-circle',
+            times: 'fas fa-times-circle', exclamation: 'fas fa-exclamation-triangle',
+            check: 'fas fa-check-circle', question: 'fas fa-question-circle', info: 'fas fa-info-circle',
         };
 
-        const mensajeFinal = risk.customMsg 
-            ? risk.customMsg 
-            : (key.includes('Observaciones') ? safeValue : (risk.text === 'Calma' ? 'Buen estado. ¡A mantener!' : 'Revisar en el informe profesional.'));
-
-        // Fallback color
         const finalColorClass = colorMap[risk.color] || colorMap['gray'];
+        const mensajeFinal = risk.customMsg ? risk.customMsg : (key.includes('Observaciones') ? safeValue : risk.text);
 
         dashboardHTML += `
             <div class="p-4 border-l-4 ${finalColorClass} rounded-md shadow-sm transition hover:shadow-lg">
@@ -687,41 +646,180 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
                 </div>
                 <p class="text-sm italic mb-2 text-gray-800 mt-2">${safeValue}</p>
                 <div class="text-xs flex items-center mt-3 border-t pt-2 border-${risk.color}-200 opacity-90 font-medium">
-                    <i class="${iconMap[risk.icon]} mr-2"></i>
-                    ${mensajeFinal}
+                    <i class="${iconMap[risk.icon]} mr-2"></i> ${mensajeFinal}
                 </div>
             </div>
         `;
     }
 
     dashboardHTML += `</div> </div>`;
+    
+    // 4. INYECTAR EL HTML EN LA PÁGINA
     dashboardContenedor.innerHTML = dashboardHTML;
 
-    // Listeners y Botones
+    // =========================================================================
+    // 5. LÓGICA DE INFORME IA (Aquí es donde insertamos los botones)
+    // =========================================================================
+    const containerAI = document.getElementById('ai-summary-dynamic');
+    
+    // Verificamos si resumenAI tiene contenido real (más de 10 letras) o es un error/vacío
+    const tieneInformeGuardado = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
+
+    if (tieneInformeGuardado) {
+        // CASO A: YA EXISTE UN INFORME (Se muestra limpio)
+        containerAI.innerHTML = `
+            <div class="prose max-w-none p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <p class="text-base leading-relaxed" style="white-space: pre-line;">${resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>
+                ${currentUser.rol === 'admin' ? '<div class="mt-2 text-right"><span class="text-xs text-green-600 font-bold"><i class="fas fa-check-circle"></i> Informe validado y guardado en Excel</span></div>' : ''}
+            </div>
+        `;
+    } else if (currentUser && currentUser.rol === 'admin') {
+        // CASO B: SOY ADMIN Y NO HAY INFORME -> MOSTRAR HERRAMIENTAS
+        containerAI.innerHTML = `
+            <div class="bg-yellow-50 p-6 rounded-lg border border-yellow-200 text-center">
+                <p class="text-yellow-800 font-bold mb-4"><i class="fas fa-exclamation-circle"></i> Este paciente aún no tiene un informe validado.</p>
+                
+                <button id="btn-generar-ia" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition transform hover:scale-105">
+                    <i class="fas fa-robot mr-2"></i> Generar Borrador con IA
+                </button>
+
+                <div id="editor-borrador" style="display: none;" class="mt-6 text-left bg-white p-4 rounded-lg shadow-inner border border-gray-200">
+                    <h4 class="font-bold text-gray-700 mb-2">📝 Editar Borrador:</h4>
+                    <textarea id="texto-borrador" class="w-full h-64 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-sans text-sm"></textarea>
+                    
+                    <div class="mt-4 flex justify-end space-x-3">
+                        <button id="btn-cancelar" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg">
+                            Cancelar
+                        </button>
+                        <button id="btn-guardar-excel" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md flex items-center">
+                            <i class="fas fa-save mr-2"></i> APROBAR Y GUARDAR
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // LÓGICA DE LOS BOTONES
+        setTimeout(() => {
+            const btnGenerar = document.getElementById('btn-generar-ia');
+            const divEditor = document.getElementById('editor-borrador');
+            const txtArea = document.getElementById('texto-borrador');
+            const btnGuardar = document.getElementById('btn-guardar-excel');
+            const btnCancelar = document.getElementById('btn-cancelar');
+
+            if (btnGenerar) {
+                // GENERAR
+                btnGenerar.onclick = async () => {
+                    btnGenerar.disabled = true;
+                    btnGenerar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Analizando datos...';
+                    
+                    try {
+                        // 👇👇 AQUÍ ESTABA EL ERROR: CORREGIMOS LA RUTA Y EL DATO 👇👇
+                        const resp = await fetch('/api/analizar-informe', { // Antes decía 'analizar-paciente'
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ persona: persona }) // Antes decía 'paciente: persona'
+                        });
+                        // 👆👆 AHORA COINCIDE CON TU SERVIDOR 👆👆
+
+                        const result = await resp.json();
+                        
+                        // Si el servidor devuelve error controlado
+                        if (!resp.ok) throw new Error(result.error || 'Error en la IA');
+
+                        // Usamos 'result.resumen' porque así lo devuelve tu API original
+                        txtArea.value = result.resumen || "Error al recibir texto.";
+                        
+                        divEditor.style.display = 'block';
+                        btnGenerar.style.display = 'none'; 
+
+                    } catch (e) {
+                        console.error(e);
+                        Swal.fire('Error', 'No se pudo conectar con la IA: ' + e.message, 'error');
+                        btnGenerar.disabled = false;
+                        btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Reintentar';
+                    }
+                };
+
+                // CANCELAR
+                btnCancelar.onclick = () => {
+                    divEditor.style.display = 'none';
+                    btnGenerar.style.display = 'inline-block';
+                    btnGenerar.disabled = false;
+                    btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Generar Borrador con IA';
+                };
+
+                // GUARDAR
+                btnGuardar.onclick = async () => {
+                    const textoFinal = txtArea.value.trim();
+                    if (!textoFinal) return Swal.fire('Atención', 'El informe está vacío.', 'warning');
+                    
+                    btnGuardar.disabled = true;
+                    btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
+
+                    try {
+                        const resp = await fetch('/api/guardar-reporte', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ dni: persona.DNI, reporteTexto: textoFinal })
+                        });
+                        
+                        if (resp.ok) {
+                            Swal.fire({
+                                icon: 'success',
+                                title: '¡Guardado!',
+                                text: 'El informe ha sido validado y guardado en el Excel.',
+                                showConfirmButton: false,
+                                timer: 2000
+                            }).then(() => window.location.reload());
+                        } else {
+                            throw new Error('Error al guardar');
+                        }
+                    } catch (error) {
+                        Swal.fire('Error', 'Fallo al guardar: ' + error.message, 'error');
+                        btnGuardar.disabled = false;
+                        btnGuardar.innerHTML = '<i class="fas fa-save mr-2"></i> APROBAR Y GUARDAR';
+                    }
+                };
+            }
+        }, 100);
+
+    } else {
+        // CASO C: SOY PACIENTE Y NO HAY INFORME
+        containerAI.innerHTML = `
+            <div class="bg-gray-100 p-6 rounded-lg text-center border border-gray-200">
+                <i class="fas fa-user-md text-4xl text-gray-400 mb-3"></i>
+                <p class="text-gray-600 text-lg">El equipo médico está procesando sus resultados para generar un informe detallado.</p>
+                <p class="text-gray-500 text-sm mt-2">Por favor, vuelva a consultar a la brevedad.</p>
+            </div>
+        `;
+    }
+
+
+    // 6. LISTENERS DE UI GENERAL (Fecha, botones inferiores)
     if (allReports.length > 1) {
         document.getElementById('report-date-selector').addEventListener('change', async (event) => {
             const selectedId = event.target.value;
-            await updateDashboardContent(selectedId);
+            // Nota: updateDashboardContent no está en el código que me diste, 
+            // asegúrate de tener esa función o recargar la página con el nuevo ID
+            if (typeof updateDashboardContent === 'function') {
+                await updateDashboardContent(selectedId);
+            } else {
+                console.warn("Función updateDashboardContent no encontrada.");
+            }
         });
     }
 
+    // Botones de acción inferior
     let accionesHTML = `
         <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
             <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
-            <p class="text-gray-700 mb-1">
-                <span class="font-semibold">Teléfono Consultas:</span> 
-                <a href="tel:3424071702" class="text-blue-600 hover:text-blue-800 font-medium">342 407-1702</a>
-            </p>
-            <p class="text-gray-700">
-                <span class="font-semibold">Mail de Consultas:</span> 
-                <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 hover:text-blue-800 font-medium">diapreventivoiapos@diapreventivo.com</a>
-            </p>
-            <p class="text-xs text-gray-500 mt-2 italic">Si desea mayor precisión sobre los resultados o hablar con un profesional del programa, no dude en conectarse a estos medios.</p>
+            <p class="text-gray-700 mb-1"><span class="font-semibold">Teléfono Consultas:</span> <a href="tel:3424071702" class="text-blue-600 font-medium">342 407-1702</a></p>
+            <p class="text-gray-700"><span class="font-semibold">Mail de Consultas:</span> <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 font-medium">diapreventivoiapos@diapreventivo.com</a></p>
         </div>
-
         <div class="flex flex-wrap items-center justify-center py-4">
-            <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${resumenAI.replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
-                <i class="fas fa-file-alt mr-2"></i> Informe Escrito AI (Ver/Imprimir)
+            <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${(resumenAI || '').replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
+                <i class="fas fa-file-alt mr-2"></i> Informe Escrito (Ver/Imprimir)
             </button>
             <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-share-alt mr-2"></i> Compartir Portal

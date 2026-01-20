@@ -518,6 +518,96 @@ app.post('/api/analizar-informe', async (req, res) => {
     }
 });
 
+// ==========================================
+// RUTA PARA GUARDAR EL REPORTE EN EXCEL 💾
+// ==========================================
+app.post('/api/guardar-reporte', async (req, res) => {
+    try {
+        const { dni, reporteTexto } = req.body;
+        
+        if (!dni || !reporteTexto) {
+            return res.status(400).json({ error: 'Faltan datos.' });
+        }
+
+        console.log(`📝 Guardando reporte para DNI: ${dni}...`);
+
+        // 1. Conectamos con la API de Sheets
+        const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+        const sheetName = 'Integrado'; // Tu hoja de datos
+
+        // 2. BUSCAR LA FILA DEL PACIENTE (Leemos la Columna C que tiene los DNIs)
+        // Ojo: Ajusta el rango si tus DNIs no están en la Columna C.
+        const responseDNI = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${sheetName}!C:C`, // Asumimos que DNI está en Columna C
+        });
+
+        const rows = responseDNI.data.values;
+        let rowIndex = -1;
+
+        // Buscamos en qué fila está el DNI (sumamos 1 porque el array empieza en 0 pero Excel en 1)
+        if (rows && rows.length) {
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i][0] && String(rows[i][0]).trim() === String(dni).trim()) {
+                    rowIndex = i + 1; 
+                    break;
+                }
+            }
+        }
+
+        if (rowIndex === -1) {
+            return res.status(404).json({ error: 'Paciente no encontrado en el Excel.' });
+        }
+
+        // 3. BUSCAR LA COLUMNA "REPORTE_MEDICO" (Leemos los encabezados de la fila 1)
+        const responseHeaders = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${sheetName}!1:1`, // Leemos toda la fila 1
+        });
+        
+        const headers = responseHeaders.data.values[0];
+        const colIndex = headers.indexOf('REPORTE_MEDICO');
+
+        if (colIndex === -1) {
+            return res.status(500).json({ error: 'No se encontró la columna REPORTE_MEDICO en la fila 1.' });
+        }
+
+        // Convertimos índice número a letra (ej: 25 -> Z)
+        const getColumnLetter = (colIndex) => {
+            let temp, letter = '';
+            while (colIndex >= 0) {
+                temp = (colIndex) % 26;
+                letter = String.fromCharCode(temp + 65) + letter;
+                colIndex = (colIndex - temp - 1) / 26;
+                // Ajuste simple para columnas simples (A-Z)
+                if(colIndex < 0) break;
+            }
+            return letter;
+        };
+        
+        const colLetter = getColumnLetter(colIndex);
+        const cellAddress = `${sheetName}!${colLetter}${rowIndex}`;
+
+        console.log(`📍 Guardando en celda: ${cellAddress}`);
+
+        // 4. ESCRIBIR EL DATO
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: cellAddress,
+            valueInputOption: 'RAW',
+            resource: {
+                values: [[reporteTexto]]
+            }
+        });
+
+        res.json({ success: true, message: 'Reporte guardado correctamente.' });
+
+    } catch (error) {
+        console.error('Error al guardar en Excel:', error);
+        res.status(500).json({ error: 'Error interno al escribir en Excel.' });
+    }
+});
+
 // --- RUTA DE INYECCIÓN ---
 app.get('/', (req, res) => {
     const filePath = path.join(__dirname, 'public', 'index.html');
