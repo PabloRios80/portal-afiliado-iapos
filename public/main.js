@@ -761,7 +761,11 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
                         const resp = await fetch('/api/guardar-reporte', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ dni: persona.DNI, reporteTexto: textoFinal })
+                            body: JSON.stringify({ 
+                                dni: persona.DNI,       // <--- ¿Esto está?
+                                nombre: persona['apellido y nombre'], // <--- ¡ESTO ES NUEVO! ¿Lo agregaste?
+                                reporteTexto: textoFinal 
+                            })
                         });
                         
                         if (resp.ok) {

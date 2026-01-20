@@ -344,72 +344,82 @@ function procesarYObtenerUltimo(rows, cols) {
         reports: sortedRecords 
     };
 }
+// ==========================================
+// RUTA BUSCAR DATOS (CON VALIDACIÓN ESTRICTA DE EXISTENCIA)
+// ==========================================
 app.post('/api/buscar-datos', async (req, res) => {
     try {
-        // 1. 🕵️‍♂️ DIAGNÓSTICO: Ver qué nos envía el Frontend
-        console.log("------------------------------------------------");
-        console.log("📥 Petición recibida en /api/buscar-datos");
-        console.log("📦 Datos del cuerpo (body):", req.body);
-        
         const { dniBuscado, usuarioSolicitante } = req.body;
+        console.log(`🔎 Buscando datos para DNI: ${dniBuscado}`);
 
-        // 2. 🛡️ SEGURIDAD: Validar que sepamos quién pregunta
-        if (!usuarioSolicitante) {
-            console.error("❌ ERROR CRÍTICO: 'usuarioSolicitante' es undefined.");
-            return res.status(400).json({ error: 'Error de seguridad: No se identificó al usuario solicitante.' });
-        }
-
-        console.log(`👤 Solicita: ${usuarioSolicitante.rol} (DNI: ${usuarioSolicitante.dni})`);
-        console.log(`🔎 Busca a: ${dniBuscado}`);
-
-        // 3. 🔐 PERMISOS: El candado lógico
-        // Normalizamos el rol a minúsculas por si acaso
-        const rolUsuario = String(usuarioSolicitante.rol).toLowerCase();
-
-        if (rolUsuario !== 'admin') {
-            // Si NO es admin, solo puede ver sus propios datos
-            // Convertimos ambos a texto para evitar errores de número vs texto
-            if (String(usuarioSolicitante.dni) !== String(dniBuscado)) {
-                console.warn("⛔ Acceso prohibido: Usuario intentó ver otro DNI");
-                return res.status(403).json({ error: 'Acceso denegado: No tienes permiso para ver este informe.' });
-            }
-        }
-
-        // 4. 🚀 BÚSQUEDA EN GOOGLE SHEETS (Si pasó la seguridad)
-        const sheetName = 'Integrado';
-        const query = encodeURIComponent(`select * where C = '${dniBuscado}'`);
+        // --- 1. VALIDACIONES DE SEGURIDAD ---
+        if (!usuarioSolicitante) return res.status(400).json({ error: 'Falta usuario solicitante' });
         
+        // Si soy User (paciente), solo puedo buscar mi propio DNI
+        if (usuarioSolicitante.rol !== 'admin' && String(usuarioSolicitante.dni) !== String(dniBuscado)) {
+            return res.status(403).json({ error: 'Acceso denegado. Solo puedes ver tus propios datos.' });
+        }
+
         const accessToken = (await oauth2Client.getAccessToken()).token;
-        const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}&tq=${query}`;
+        
+        // --- 2. BUSQUEDA EN PARALELO (Por velocidad) ---
+        // Hoja 1: INTEGRADO (Datos Médicos - CRÍTICO)
+        const queryMedica = encodeURIComponent(`select * where C = '${dniBuscado}'`);
+        const urlMedica = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Integrado&tq=${queryMedica}`;
+        
+        // Hoja 2: INFORMES IA (Textos guardados - OPCIONAL)
+        const queryInforme = encodeURIComponent(`select C where A = '${dniBuscado}'`);
+        const urlInforme = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Informes IA&tq=${queryInforme}`;
 
-        const response = await axios.get(url, {
-            headers: { Authorization: `Bearer ${accessToken}` }
-        });
+        const [resMedica, resInforme] = await Promise.all([
+            axios.get(urlMedica, { headers: { Authorization: `Bearer ${accessToken}` } }),
+            axios.get(urlInforme, { headers: { Authorization: `Bearer ${accessToken}` } })
+        ]);
 
-        const dataText = response.data.replace(/.*google.visualization.Query.setResponse\((.*)\);/s, '$1');
-        const dataJson = JSON.parse(dataText);
+        // --- 3. PROCESAR DATOS MÉDICOS (INTEGRADO) ---
+        const txtMedica = resMedica.data.replace(/.*google.visualization.Query.setResponse\((.*)\);/s, '$1');
+        const jsonMedica = JSON.parse(txtMedica);
+        const rows = jsonMedica.table.rows;
 
-        // Procesar datos (igual que siempre)...
-        const rows = dataJson.table.rows;
+        // 🚨 VALIDACIÓN CRÍTICA: SI NO ESTÁ EN INTEGRADO, PARAMOS AQUÍ 🚨
+        if (rows.length === 0) {
+            console.log("❌ DNI no encontrado en hoja Integrado.");
+            return res.status(404).json({ 
+                error: 'No existe cierre del Día Preventivo, consulte con el programa.' 
+            });
+        }
+
+        // --- 4. PROCESAR INFORME IA (Si existe) ---
+        const txtInforme = resInforme.data.replace(/.*google.visualization.Query.setResponse\((.*)\);/s, '$1');
+        const jsonInforme = JSON.parse(txtInforme);
+        
+        let reporteGuardado = null;
+        // Si encontramos fila y tiene algo en la columna C (índice 0 de la query 'select C')
+        if (jsonInforme.table.rows.length > 0 && jsonInforme.table.rows[0].c[0]) {
+            reporteGuardado = jsonInforme.table.rows[0].c[0].v;
+        }
+
+        // --- 5. ARMAR RESPUESTA ---
         const reports = rows.map(row => {
             const rowData = {};
-            dataJson.table.cols.forEach((col, index) => {
+            jsonMedica.table.cols.forEach((col, index) => {
                 if (col.label) {
                     rowData[col.label] = row.c[index] ? row.c[index].v : '';
                 }
             });
+            // Inyectamos el reporte encontrado en la otra hoja
+            rowData['REPORTE_MEDICO'] = reporteGuardado; 
             return rowData;
         });
 
-        console.log(`✅ Resultados encontrados: ${reports.length}`);
+        console.log(`✅ Paciente encontrado. Reporte IA previo: ${reporteGuardado ? 'SÍ' : 'NO'}`);
         res.json({ reports });
 
     } catch (error) {
-        console.error('🔥 Error fatal en el servidor:', error);
-        res.status(500).json({ error: 'Error interno del servidor al procesar la solicitud.' });
+        console.error('🔥 Error buscando datos:', error);
+        res.status(500).json({ error: 'Error interno al procesar datos.' });
     }
 });
-
 // --- RUTA: BÚSQUEDA POR FECHA ---
 app.post('/api/buscar-datos-por-fecha', async (req, res) => {
     try {
@@ -517,94 +527,86 @@ app.post('/api/analizar-informe', async (req, res) => {
         res.status(500).json({ error: 'Fallo al generar el resumen personalizado con IA.' });
     }
 });
-
 // ==========================================
-// RUTA PARA GUARDAR EL REPORTE EN EXCEL 💾
+// RUTA PARA GUARDAR EL REPORTE EN EXCEL 💾 (SOPORTA 'Informes IA')
 // ==========================================
 app.post('/api/guardar-reporte', async (req, res) => {
     try {
-        const { dni, reporteTexto } = req.body;
+        // 1. Recibimos también el NOMBRE (agregado en main.js)
+        const { dni, nombre, reporteTexto } = req.body;
         
         if (!dni || !reporteTexto) {
+            console.error("❌ Faltan datos en la petición de guardado.");
             return res.status(400).json({ error: 'Faltan datos.' });
         }
 
-        console.log(`📝 Guardando reporte para DNI: ${dni}...`);
+        console.log(`📝 Procesando guardado para DNI: ${dni}...`);
 
-        // 1. Conectamos con la API de Sheets
         const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
-        const sheetName = 'Integrado'; // Tu hoja de datos
+        
+        // ⚠️ CAMBIO CRÍTICO: Usamos la hoja separada, no 'Integrado'
+        const sheetName = 'Informes IA'; 
 
-        // 2. BUSCAR LA FILA DEL PACIENTE (Leemos la Columna C que tiene los DNIs)
-        // Ojo: Ajusta el rango si tus DNIs no están en la Columna C.
-        const responseDNI = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `${sheetName}!C:C`, // Asumimos que DNI está en Columna C
-        });
+        // 2. BUSCAR SI EL PACIENTE YA EXISTE EN LA HOJA 'Informes IA'
+        // Leemos solo la Columna A (donde van los DNI en esta hoja nueva)
+        let responseDNI;
+        try {
+            responseDNI = await sheets.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `'${sheetName}'!A:A`, // Comillas simples por si el nombre tiene espacios
+            });
+        } catch (error) {
+            console.error(`❌ Error al leer la hoja '${sheetName}'. Asegúrate de que exista.`);
+            throw error; // Salta al catch final
+        }
 
-        const rows = responseDNI.data.values;
+        const rows = responseDNI.data.values || [];
         let rowIndex = -1;
 
-        // Buscamos en qué fila está el DNI (sumamos 1 porque el array empieza en 0 pero Excel en 1)
-        if (rows && rows.length) {
-            for (let i = 0; i < rows.length; i++) {
-                if (rows[i][0] && String(rows[i][0]).trim() === String(dni).trim()) {
-                    rowIndex = i + 1; 
-                    break;
+        // Buscamos la fila exacta
+        for (let i = 0; i < rows.length; i++) {
+            // Comparamos como texto y quitamos espacios para evitar errores
+            if (rows[i][0] && String(rows[i][0]).trim() === String(dni).trim()) {
+                rowIndex = i + 1; // Excel empieza en 1, array en 0
+                break;
+            }
+        }
+
+        if (rowIndex !== -1) {
+            // OPCIÓN A: EL PACIENTE YA EXISTE -> ACTUALIZAMOS SOLO EL REPORTE (Columna C)
+            console.log(`🔄 El paciente ya tiene fila (${rowIndex}). Actualizando reporte...`);
+            
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `'${sheetName}'!C${rowIndex}`, // Columna C es el reporte
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[reporteTexto]]
                 }
-            }
+            });
+
+        } else {
+            // OPCIÓN B: EL PACIENTE ES NUEVO -> AGREGAMOS FILA AL FINAL
+            console.log(`➕ Paciente nuevo en Informes IA. Creando fila...`);
+            
+            // Guardamos: [DNI, NOMBRE, REPORTE]
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `'${sheetName}'!A:C`,
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[dni, nombre || 'Paciente', reporteTexto]]
+                }
+            });
         }
 
-        if (rowIndex === -1) {
-            return res.status(404).json({ error: 'Paciente no encontrado en el Excel.' });
-        }
-
-        // 3. BUSCAR LA COLUMNA "REPORTE_MEDICO" (Leemos los encabezados de la fila 1)
-        const responseHeaders = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `${sheetName}!1:1`, // Leemos toda la fila 1
-        });
-        
-        const headers = responseHeaders.data.values[0];
-        const colIndex = headers.indexOf('REPORTE_MEDICO');
-
-        if (colIndex === -1) {
-            return res.status(500).json({ error: 'No se encontró la columna REPORTE_MEDICO en la fila 1.' });
-        }
-
-        // Convertimos índice número a letra (ej: 25 -> Z)
-        const getColumnLetter = (colIndex) => {
-            let temp, letter = '';
-            while (colIndex >= 0) {
-                temp = (colIndex) % 26;
-                letter = String.fromCharCode(temp + 65) + letter;
-                colIndex = (colIndex - temp - 1) / 26;
-                // Ajuste simple para columnas simples (A-Z)
-                if(colIndex < 0) break;
-            }
-            return letter;
-        };
-        
-        const colLetter = getColumnLetter(colIndex);
-        const cellAddress = `${sheetName}!${colLetter}${rowIndex}`;
-
-        console.log(`📍 Guardando en celda: ${cellAddress}`);
-
-        // 4. ESCRIBIR EL DATO
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: SPREADSHEET_ID,
-            range: cellAddress,
-            valueInputOption: 'RAW',
-            resource: {
-                values: [[reporteTexto]]
-            }
-        });
-
+        console.log("✅ Guardado exitoso.");
         res.json({ success: true, message: 'Reporte guardado correctamente.' });
 
     } catch (error) {
-        console.error('Error al guardar en Excel:', error);
-        res.status(500).json({ error: 'Error interno al escribir en Excel.' });
+        console.error('🔥 Error fatal al guardar en Excel:', error);
+        // Devolvemos el mensaje de error para verlo en el navegador si hace falta
+        res.status(500).json({ error: 'Error interno al escribir en Excel: ' + error.message });
     }
 });
 
