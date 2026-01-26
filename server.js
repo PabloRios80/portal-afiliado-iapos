@@ -79,40 +79,34 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Error Login' }); }
 });
 
-// ----------------------------------------------------------------------
-// 🔍 BUSCAR DATOS (CORREGIDO PARA LEER BIEN LOS INFORMES)
-// ----------------------------------------------------------------------
 app.post('/api/buscar-datos', async (req, res) => {
     try {
         const { dniBuscado } = req.body;
         const accessToken = (await oauth2Client.getAccessToken()).token;
         const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
 
-        // 1. Traemos los datos médicos (Hoja Integrado) usando Axios (Gviz) como siempre
+        // 1. Datos médicos (Hoja Integrado)
         const resMed = await axios.get(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Integrado&tq=${encodeURIComponent(`select * where C = '${dniBuscado}'`)}`, { headers: { Authorization: `Bearer ${accessToken}` } });
         const jsonMed = JSON.parse(resMed.data.replace(/.*setResponse\((.*)\);/s, '$1'));
 
         if (!jsonMed.table?.rows.length) return res.status(404).json({ error: 'No hay datos' });
 
-        // 2. Traemos TODOS los informes IA usando la API Oficial (Más seguro que Gviz para buscar con comillas)
-        // Esto soluciona que no encuentre el informe si tiene la comilla '
+        // 2. Informes IA (API Oficial)
         const resInformes = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
-            range: "'Informes IA'!A:C" // Leemos columnas A (DNI), B (Nombre), C (Reporte)
+            range: "'Informes IA'!A:C" 
         });
 
         const filasInformes = resInformes.data.values || [];
         
-        // Buscamos el DNI manualmente ignorando la comilla '
-        // fila[0] es el DNI, fila[2] es el Reporte
+        // Buscamos ignorando la comilla '
         const filaEncontrada = filasInformes.find(fila => {
-            const dniExcel = fila[0]?.toString().replace("'", "").trim(); // Quitamos la comilla para comparar
+            const dniExcel = fila[0]?.toString().replace("'", "").trim();
             return dniExcel == dniBuscado.toString().trim();
         });
 
         const reporte = filaEncontrada ? filaEncontrada[2] : null;
 
-        // Combinamos todo
         const reports = jsonMed.table.rows.map(row => {
             const d = {}; jsonMed.table.cols.forEach((c, i) => { if(c.label) d[c.label] = row.c[i]?.v || ''; });
             d['REPORTE_MEDICO'] = reporte; 
@@ -126,9 +120,7 @@ app.post('/api/buscar-datos', async (req, res) => {
     }
 });
 
-// ----------------------------------------------------------------------
-// 💾 GUARDAR REPORTE (CORREGIDO PARA EVITAR DUPLICADOS)
-// ----------------------------------------------------------------------
+// --- Guardar Reporte ---
 app.post('/api/guardar-reporte', async (req, res) => {
     console.log("💾 Intentando guardar reporte...");
     try {
@@ -137,18 +129,15 @@ app.post('/api/guardar-reporte', async (req, res) => {
 
         const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
         
-        // 1. Leemos la columna de DNIs
         const resDNI = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `'Informes IA'!A:A` });
         const rows = resDNI.data.values || [];
         
-        // 2. Buscamos si ya existe (IGNORANDO LA COMILLA)
         const rowIndex = rows.findIndex(r => {
             const dniExcel = r[0]?.toString().replace("'", "").trim();
             return dniExcel == dni.toString().trim();
         });
 
         if (rowIndex !== -1) {
-            // ACTUALIZAR (Sobrescribe la fila existente)
             console.log(`🔄 Actualizando reporte existente para DNI ${dni}`);
             await sheets.spreadsheets.values.update({ 
                 spreadsheetId: SPREADSHEET_ID, 
@@ -157,9 +146,7 @@ app.post('/api/guardar-reporte', async (req, res) => {
                 resource: { values: [[reporteTexto]] } 
             });
         } else {
-            // CREAR NUEVO (Solo si no existe)
             console.log(`✨ Creando nuevo reporte para DNI ${dni}`);
-            // Guardamos con la comilla ' para mantener el formato texto
             await sheets.spreadsheets.values.append({ 
                 spreadsheetId: SPREADSHEET_ID, 
                 range: `'Informes IA'!A:C`, 
@@ -170,44 +157,56 @@ app.post('/api/guardar-reporte', async (req, res) => {
         res.json({ success: true });
     } catch (e) { 
         console.error("❌ ERROR AL GUARDAR:", e.message);
-        if(e.response && e.response.status === 403) {
-            console.error("🚨 PISTA: ¡Falta habilitar Google Sheets API en el proyecto!");
-        }
         res.status(500).json({ error: 'Error Excel: ' + e.message }); 
     }
 });
 
 // ======================================================================
-// 🧠 RUTA IA: PROFESIONAL + LIMPIEZA
+// 🧠 RUTA IA: TONO "MÉDICO MODERNO" + ICONOS + FORMATO VISUAL
 // ======================================================================
+
 function construirPrompt(datosPersona) {
     const datosJson = JSON.stringify(datosPersona, null, 2);
     const nombreMedico = datosPersona['Profesional'] || 'Equipo Médico IAPOS';
+    
+    // Extraemos solo el nombre de pila para el saludo (ej: "Melani")
+    // Suponemos formato "Aguiar Melani Solange", tomamos el segundo elemento
+    let partesNombre = datosPersona['apellido y nombre'].split(' ');
+    let nombrePila = partesNombre.length > 1 ? partesNombre[1] : partesNombre[0];
 
     return `Actúa como el Dr./Dra. ${nombreMedico}, del equipo de salud de IAPOS.
-    Escribe un informe de devolución clínica para el paciente ${datosPersona['apellido y nombre']}.
+    Genera un informe médico visual y fácil de leer para el paciente.
 
-    INSTRUCCIONES:
-    1. Tono médico, empático pero profesional y sobrio.
-    2. Menciona fortalezas (Verde) y riesgos (Rojo/Amarillo) con claridad.
-    3. NO incluyas JSON ni datos técnicos.
-    
-    DATOS: ${datosJson}`;
+    INSTRUCCIONES DE DISEÑO Y TONO:
+    1.  **Encabezado:** Mantenlo formal (Fecha, Profesional, Paciente, DNI, Edad).
+    2.  **Saludo:** "Hola ${nombrePila}", cálido pero profesional.
+    3.  **Cuerpo Visual:**
+        * Usa **ICONOS** (emojis) al inicio de cada punto (ej: 🫀 para corazón, 🦷 para dientes, 💉 para vacunas, 🥗 para hábitos).
+        * Usa **SEMÁFOROS** claros:
+            * 🟢 (Verde/Excelente): Para valores normales.
+            * 🟡 (Amarillo/Alerta): Para advertencias leves.
+            * 🔴 (Rojo/Acción): Para riesgos o estudios faltantes importantes.
+    4.  **Estilo de Escritura:** Directo y moderno. No uses lenguaje legal ("Me dirijo a usted en mi carácter de..."). Habla claro: "Tus valores están bien", "Necesitamos ver esto".
+    5.  **Cierre:** "Saludos cordiales, Dr./Dra. ${nombreMedico}". **NO** pongas número de matrícula.
+
+    CONTENIDO MÉDICO:
+    * Felicita los hábitos saludables.
+    * Explica claramente por qué es importante hacerse el PAP/HPV o ir al odontólogo si falta, pero sin tono de regaño.
+
+    DATOS A PROCESAR:
+    ${datosJson}`;
 }
 
 function limpiarRespuesta(texto) {
-    // 1. Borrar bloques de código
     let limpio = texto.replace(/```[\s\S]*?```/g, "");
-    // 2. Borrar encabezados técnicos
     limpio = limpio.replace(/DATOS DEL PACIENTE/gi, "");
     limpio = limpio.replace(/REPORTE TÉCNICO/gi, "");
-    // 3. Limpieza final
     return limpio.trim();
 }
 
 app.post('/api/analizar-informe', async (req, res) => {
     if (!req.body.persona) return res.status(400).json({ error: 'Faltan datos' });
-    console.log(`🧠 Generando informe...`);
+    console.log(`🧠 Generando informe moderno...`);
 
     try {
         const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
