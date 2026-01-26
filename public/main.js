@@ -1,5 +1,12 @@
 // --- Variables Globales ---
-const ESTUDIOS_API_URL = window.ESTUDIOS_API_URL || 'http://localhost:4000';
+
+// 1. Detectamos si estamos trabajando en local (tu PC)
+const esEntornoLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+// 2. Elegimos la URL correcta automáticamente
+const ESTUDIOS_API_URL = esEntornoLocal 
+    ? 'http://localhost:4000'                          // 🏠 Si estás en tu casa
+    : 'https://estudios-complementarios-dp.onrender.com'; // ☁️ Si estás en la nube
 const API_BASE_PATH = '/api';
 
 // Variables de Estado
