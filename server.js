@@ -78,7 +78,9 @@ app.post('/api/auth/login', async (req, res) => {
         else res.status(400).json({ error: 'Contraseña incorrecta' });
     } catch (e) { res.status(500).json({ error: 'Error Login' }); }
 });
-
+// ======================================================================
+// 🔍 BUSCAR DATOS (CON ORDEN CRONOLÓGICO Y FECHAS ARREGLADAS)
+// ======================================================================
 app.post('/api/buscar-datos', async (req, res) => {
     try {
         const { dniBuscado } = req.body;
@@ -87,6 +89,8 @@ app.post('/api/buscar-datos', async (req, res) => {
 
         // 1. Datos médicos (Hoja Integrado)
         const resMed = await axios.get(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Integrado&tq=${encodeURIComponent(`select * where C = '${dniBuscado}'`)}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        
+        // Limpiamos el JSON de Google
         const jsonMed = JSON.parse(resMed.data.replace(/.*setResponse\((.*)\);/s, '$1'));
 
         if (!jsonMed.table?.rows.length) return res.status(404).json({ error: 'No hay datos' });
@@ -107,13 +111,69 @@ app.post('/api/buscar-datos', async (req, res) => {
 
         const reporte = filaEncontrada ? filaEncontrada[2] : null;
 
-        const reports = jsonMed.table.rows.map(row => {
-            const d = {}; jsonMed.table.cols.forEach((c, i) => { if(c.label) d[c.label] = row.c[i]?.v || ''; });
-            d['REPORTE_MEDICO'] = reporte; 
+        // --- FUNCIÓN HELPER PARA ARREGLAR FECHAS ---
+        function procesarFecha(googleDateString) {
+            if (!googleDateString) return { fechaObjeto: new Date(0), fechaTexto: "" };
+            
+            // El formato viene como "Date(2023,9,5)" -> Año, Mes(0-11), Día
+            const match = googleDateString.match(/Date\((\d+),(\d+),(\d+)\)/);
+            
+            if (match) {
+                const anio = parseInt(match[1]);
+                const mes = parseInt(match[2]); // OJO: Google usa meses 0-11
+                const dia = parseInt(match[3]);
+                
+                // Creamos fecha real para ordenar (Mes va tal cual para JS)
+                const fechaObj = new Date(anio, mes, dia);
+                
+                // Creamos texto bonito (Aquí SUMAMOS 1 al mes para humanos)
+                const mesHumano = (mes + 1).toString().padStart(2, '0');
+                const diaHumano = dia.toString().padStart(2, '0');
+                const fechaTxt = `${diaHumano}/${mesHumano}/${anio}`;
+                
+                return { fechaObjeto: fechaObj, fechaTexto: fechaTxt };
+            }
+            // Si no es formato Date(...), devolvemos tal cual
+            return { fechaObjeto: new Date(0), fechaTexto: googleDateString };
+        }
+
+        // 3. Procesamos y Ordenamos
+        let reports = jsonMed.table.rows.map(row => {
+            const d = {}; 
+            let fechaParaOrdenar = new Date(0); // Fecha por defecto antigua
+
+            jsonMed.table.cols.forEach((c, i) => { 
+                if(c.label) {
+                    let valor = row.c[i]?.v || '';
+                    
+                    // Si la columna es FECHAX (o parece una fecha de Google)
+                    if (c.label === 'FECHAX' || (typeof valor === 'string' && valor.startsWith('Date('))) {
+                        const procesado = procesarFecha(valor);
+                        d[c.label] = procesado.fechaTexto; // Guardamos el texto bonito (5/10/23)
+                        
+                        // Si es la columna clave de fecha, guardamos el objeto para ordenar después
+                        if (c.label === 'FECHAX') {
+                            fechaParaOrdenar = procesado.fechaObjeto;
+                        }
+                    } else {
+                        d[c.label] = valor;
+                    }
+                } 
+            });
+            
+            d['REPORTE_MEDICO'] = reporte;
+            d['_fechaOrden'] = fechaParaOrdenar; // Campo oculto temporal para ordenar
             return d;
         });
 
+        // 4. ORDENAR: El más nuevo primero (Descendente)
+        reports.sort((a, b) => b._fechaOrden - a._fechaOrden);
+
+        // (Opcional) Limpiamos el campo temporal _fechaOrden antes de enviar
+        reports.forEach(r => delete r._fechaOrden);
+
         res.json({ reports });
+
     } catch (e) { 
         console.error("Error al buscar datos:", e);
         res.status(500).json({ error: 'Error Datos' }); 
