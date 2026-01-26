@@ -12,13 +12,10 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 // ----------------------------------------------------------------------
-// 🔑 CLAVE API (La que funciona)
+// 🔑 CLAVE API
 // ----------------------------------------------------------------------
 const GENAI_API_KEY = process.env.GEMINI_API_KEY; 
-
-if (!GENAI_API_KEY) {
-    console.error("❌ ERROR: No hay GEMINI_API_KEY en el archivo .env");
-}
+if (!GENAI_API_KEY) console.error("❌ ERROR: Falta GEMINI_API_KEY en .env");
 
 // ----------------------------------------------------------------------
 // CONFIGURACIÓN EXCEL
@@ -82,55 +79,77 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Error Login' }); }
 });
 
+// ----------------------------------------------------------------------
+// 🔍 BUSCAR DATOS (CORREGIDO PARA LEER BIEN LOS INFORMES)
+// ----------------------------------------------------------------------
 app.post('/api/buscar-datos', async (req, res) => {
     try {
         const { dniBuscado } = req.body;
         const accessToken = (await oauth2Client.getAccessToken()).token;
-        const [resMed, resInf] = await Promise.all([
-            axios.get(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Integrado&tq=${encodeURIComponent(`select * where C = '${dniBuscado}'`)}`, { headers: { Authorization: `Bearer ${accessToken}` } }),
-            axios.get(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Informes IA&tq=${encodeURIComponent(`select C where A = '${dniBuscado}'`)}`, { headers: { Authorization: `Bearer ${accessToken}` } })
-        ]);
+        const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+        // 1. Traemos los datos médicos (Hoja Integrado) usando Axios (Gviz) como siempre
+        const resMed = await axios.get(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Integrado&tq=${encodeURIComponent(`select * where C = '${dniBuscado}'`)}`, { headers: { Authorization: `Bearer ${accessToken}` } });
         const jsonMed = JSON.parse(resMed.data.replace(/.*setResponse\((.*)\);/s, '$1'));
+
         if (!jsonMed.table?.rows.length) return res.status(404).json({ error: 'No hay datos' });
-        const jsonInf = JSON.parse(resInf.data.replace(/.*setResponse\((.*)\);/s, '$1'));
-        const reporte = (jsonInf.table.rows.length > 0) ? jsonInf.table.rows[0].c[0]?.v : null;
+
+        // 2. Traemos TODOS los informes IA usando la API Oficial (Más seguro que Gviz para buscar con comillas)
+        // Esto soluciona que no encuentre el informe si tiene la comilla '
+        const resInformes = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: "'Informes IA'!A:C" // Leemos columnas A (DNI), B (Nombre), C (Reporte)
+        });
+
+        const filasInformes = resInformes.data.values || [];
+        
+        // Buscamos el DNI manualmente ignorando la comilla '
+        // fila[0] es el DNI, fila[2] es el Reporte
+        const filaEncontrada = filasInformes.find(fila => {
+            const dniExcel = fila[0]?.toString().replace("'", "").trim(); // Quitamos la comilla para comparar
+            return dniExcel == dniBuscado.toString().trim();
+        });
+
+        const reporte = filaEncontrada ? filaEncontrada[2] : null;
+
+        // Combinamos todo
         const reports = jsonMed.table.rows.map(row => {
             const d = {}; jsonMed.table.cols.forEach((c, i) => { if(c.label) d[c.label] = row.c[i]?.v || ''; });
-            d['REPORTE_MEDICO'] = reporte; return d;
+            d['REPORTE_MEDICO'] = reporte; 
+            return d;
         });
+
         res.json({ reports });
-    } catch (e) { res.status(500).json({ error: 'Error Datos' }); }
+    } catch (e) { 
+        console.error("Error al buscar datos:", e);
+        res.status(500).json({ error: 'Error Datos' }); 
+    }
 });
 
-// ======================================================================
-// 💾 RUTA GUARDAR: AHORA CON DIAGNÓSTICO DETALLADO
-// ======================================================================
+// ----------------------------------------------------------------------
+// 💾 GUARDAR REPORTE (CORREGIDO PARA EVITAR DUPLICADOS)
+// ----------------------------------------------------------------------
 app.post('/api/guardar-reporte', async (req, res) => {
     console.log("💾 Intentando guardar reporte...");
     try {
         const { dni, nombre, reporteTexto } = req.body;
-        
-        // Verificación básica
-        if (!dni || !reporteTexto) {
-            console.error("❌ Faltan datos: DNI o Reporte vacíos");
-            return res.status(400).json({ error: 'Faltan datos para guardar' });
-        }
+        if (!dni || !reporteTexto) return res.status(400).json({ error: 'Faltan datos' });
 
         const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
         
-        // 1. Buscamos si el DNI ya tiene reporte
-        // Asegúrate que la hoja se llame EXACTAMENTE 'Informes IA'
-        const resDNI = await sheets.spreadsheets.values.get({ 
-            spreadsheetId: SPREADSHEET_ID, 
-            range: `'Informes IA'!A:A` 
-        });
-        
+        // 1. Leemos la columna de DNIs
+        const resDNI = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `'Informes IA'!A:A` });
         const rows = resDNI.data.values || [];
-        const rowIndex = rows.findIndex(r => r[0] == dni);
+        
+        // 2. Buscamos si ya existe (IGNORANDO LA COMILLA)
+        const rowIndex = rows.findIndex(r => {
+            const dniExcel = r[0]?.toString().replace("'", "").trim();
+            return dniExcel == dni.toString().trim();
+        });
 
         if (rowIndex !== -1) {
-            // ACTUALIZAR
-            console.log(`📝 Actualizando reporte para DNI ${dni} en fila ${rowIndex + 1}`);
+            // ACTUALIZAR (Sobrescribe la fila existente)
+            console.log(`🔄 Actualizando reporte existente para DNI ${dni}`);
             await sheets.spreadsheets.values.update({ 
                 spreadsheetId: SPREADSHEET_ID, 
                 range: `'Informes IA'!C${rowIndex + 1}`, 
@@ -138,63 +157,68 @@ app.post('/api/guardar-reporte', async (req, res) => {
                 resource: { values: [[reporteTexto]] } 
             });
         } else {
-            // CREAR NUEVO
+            // CREAR NUEVO (Solo si no existe)
             console.log(`✨ Creando nuevo reporte para DNI ${dni}`);
+            // Guardamos con la comilla ' para mantener el formato texto
             await sheets.spreadsheets.values.append({ 
                 spreadsheetId: SPREADSHEET_ID, 
                 range: `'Informes IA'!A:C`, 
                 valueInputOption: 'RAW', 
-                resource: { values: [[dni, nombre, reporteTexto]] } 
+                resource: { values: [[`'${dni}`, nombre, reporteTexto]] } 
             });
         }
-        
         res.json({ success: true });
-
     } catch (e) { 
-        // 👇 ESTO TE MOSTRARÁ EL ERROR REAL EN LA TERMINAL 👇
-        console.error("❌ ERROR CRÍTICO AL GUARDAR:", e.message);
-        if (e.response) {
-            console.error("🔍 Detalle del error de Google:", JSON.stringify(e.response.data, null, 2));
+        console.error("❌ ERROR AL GUARDAR:", e.message);
+        if(e.response && e.response.status === 403) {
+            console.error("🚨 PISTA: ¡Falta habilitar Google Sheets API en el proyecto!");
         }
-        res.status(500).json({ error: 'Error al guardar en Excel: ' + e.message }); 
+        res.status(500).json({ error: 'Error Excel: ' + e.message }); 
     }
 });
 
 // ======================================================================
-// 🧠 RUTA IA: CON PROMPT "CÁLIDO Y CERCANO" 💖
+// 🧠 RUTA IA: PROFESIONAL + LIMPIEZA
 // ======================================================================
 function construirPrompt(datosPersona) {
     const datosJson = JSON.stringify(datosPersona, null, 2);
-    // Nuevo prompt con "alma"
-    return `Actúa como un Asistente de Salud personal de IAPOS, muy cercano, empático y profesional.
-    Tu objetivo es motivar al paciente.
-    
-    INSTRUCCIONES DE TONO:
-    1. 🟢 Lo bueno: ¡Felicita con entusiasmo! Usa frases como "¡Excelente trabajo!", "¡Sigue así!", "Esto es una gran noticia".
-    2. 🟡/🔴 Los riesgos: Sé amable pero firme. No regañes, sino explica con preocupación genuina por qué es importante cuidarse. Usa frases como "Aquí debemos prestar atención", "Me gustaría que revisemos esto juntos", "Por tu bienestar, es importante...".
-    3. General: Háblale de "tú" o "vos" (respetuoso pero cercano). Que sienta que un médico amigo le habla.
+    const nombreMedico = datosPersona['Profesional'] || 'Equipo Médico IAPOS';
 
-    FORMATO DEL REPORTE (Mantén esta estructura técnica pero con el tono nuevo):
-    - Usa Markdown.
-    - Usa emojis para guiar la lectura.
-    - DATOS DEL PACIENTE: ${datosJson}`;
+    return `Actúa como el Dr./Dra. ${nombreMedico}, del equipo de salud de IAPOS.
+    Escribe un informe de devolución clínica para el paciente ${datosPersona['apellido y nombre']}.
+
+    INSTRUCCIONES:
+    1. Tono médico, empático pero profesional y sobrio.
+    2. Menciona fortalezas (Verde) y riesgos (Rojo/Amarillo) con claridad.
+    3. NO incluyas JSON ni datos técnicos.
+    
+    DATOS: ${datosJson}`;
+}
+
+function limpiarRespuesta(texto) {
+    // 1. Borrar bloques de código
+    let limpio = texto.replace(/```[\s\S]*?```/g, "");
+    // 2. Borrar encabezados técnicos
+    limpio = limpio.replace(/DATOS DEL PACIENTE/gi, "");
+    limpio = limpio.replace(/REPORTE TÉCNICO/gi, "");
+    // 3. Limpieza final
+    return limpio.trim();
 }
 
 app.post('/api/analizar-informe', async (req, res) => {
     if (!req.body.persona) return res.status(400).json({ error: 'Faltan datos' });
-    console.log(`🧠 Generando informe con cariño...`);
+    console.log(`🧠 Generando informe...`);
 
     try {
         const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-        // Usamos el modelo que ya sabemos que funciona
         const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
         const prompt = construirPrompt(req.body.persona);
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const text = response.text();
-
-        res.json({ resumen: text.trim() });
+        
+        let cleanText = limpiarRespuesta(response.text());
+        res.json({ resumen: cleanText });
 
     } catch (error) {
         console.error('🚨 ERROR IA:', error.message);
