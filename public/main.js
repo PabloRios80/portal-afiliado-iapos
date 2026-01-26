@@ -1,13 +1,15 @@
 // --- Variables Globales ---
 const ESTUDIOS_API_URL = window.ESTUDIOS_API_URL || 'http://localhost:4000';
 const API_BASE_PATH = '/api';
-// Variable global para guardar quién entró
+
+// Variables de Estado
 let usuarioActual = null;
-let allReports = [];
+let allReports = []; // Historial completo
 let cachedEstudiosResults = {};
+let reporteSeleccionado = null; // El reporte que se está mirando AHORA
 
 // --- VARIABLES DE AUTENTICACIÓN ---
-let authToken = localStorage.getItem('iapos_token'); // Intentamos recuperar sesión
+let authToken = localStorage.getItem('iapos_token'); 
 let currentUser = JSON.parse(localStorage.getItem('iapos_user'));
 
 // ==============================================================================
@@ -56,7 +58,7 @@ if (btnReg) {
 
             if (response.ok) {
                 Swal.fire('¡Éxito!', data.message, 'success');
-                mostrarLogin(); // Llevamos al usuario al login
+                mostrarLogin(); 
             } else {
                 Swal.fire('Error', data.error || 'No se pudo registrar.', 'error');
             }
@@ -88,29 +90,24 @@ if (btnLogin) {
             });
             const data = await response.json();
             if (response.ok) {
-                // Guardar sesión
                 localStorage.setItem('iapos_token', data.token);
                 localStorage.setItem('iapos_user', JSON.stringify(data.usuario));
                 authToken = data.token;
                 currentUser = data.usuario;
 
                 Swal.close();
-                cerrarAuthModal(); // Cierra el modal de login
+                cerrarAuthModal(); 
 
-                // LÓGICA DE ROLES MEJORADA
                 if (currentUser.rol === 'admin') {
-                    // SI ES ADMIN: ¡Abrir buscador DIRECTAMENTE!
                     const searchContainer = document.getElementById('search-container');
                     if (searchContainer) {
-                        searchContainer.style.display = 'flex'; // Usamos flex para centrar
-                        document.getElementById('dni-input').focus(); // Poner el cursor listo para escribir
+                        searchContainer.style.display = 'flex'; 
+                        document.getElementById('dni-input').focus(); 
                     }
-                    // Ocultamos vista inicial
                     const vistaInicial = document.getElementById('vista-inicial');
                     if(vistaInicial) vistaInicial.style.display = 'none';
 
                 } else {
-                    // SI ES USUARIO: Cargar sus datos
                     if(document.getElementById('search-container')) {
                         document.getElementById('search-container').style.display = 'none';
                     }
@@ -125,6 +122,7 @@ if (btnLogin) {
         }
     });
 }
+
 // ==============================================================================
 // FUNCIÓN PRINCIPAL DE CARGA (SEGURA CON TOKEN)
 // ==============================================================================
@@ -137,15 +135,8 @@ async function iniciarPortal(dniParaBuscar) {
     });
 
     try {
-        // 1. Aseguramos que currentUser tenga datos
-        if (!currentUser) {
-            currentUser = JSON.parse(localStorage.getItem('iapos_user'));
-        }
-
-        // 2. Si sigue sin haber usuario, paramos para evitar error
-        if (!currentUser) {
-            throw new Error('No se identificó la sesión. Por favor ingresa de nuevo.');
-        }
+        if (!currentUser) currentUser = JSON.parse(localStorage.getItem('iapos_user'));
+        if (!currentUser) throw new Error('No se identificó la sesión. Por favor ingresa de nuevo.');
 
         const response = await fetch('/api/buscar-datos', {
             method: 'POST',
@@ -153,17 +144,13 @@ async function iniciarPortal(dniParaBuscar) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${authToken}` 
             },
-            // 👇👇 AQUÍ ESTÁ EL CAMBIO QUE NECESITAS 👇👇
             body: JSON.stringify({ 
                 dniBuscado: dniParaBuscar,      
-                usuarioSolicitante: currentUser // <--- ¡ESTA ES LA LÍNEA MÁGICA!
+                usuarioSolicitante: currentUser 
             })
-            // 👆👆 SIN ESTO, EL SERVIDOR FALLA 👆👆
         });
 
         const dataResult = await response.json();
-
-        // ... (El resto del código sigue igual) ...
         
         if (!response.ok) {
             if (response.status === 401 || response.status === 403) {
@@ -174,7 +161,6 @@ async function iniciarPortal(dniParaBuscar) {
             throw new Error(dataResult.error || 'Error al buscar datos.');
         }
 
-        // Procesamiento de reportes
         let reports = dataResult.reports;
         if (!reports || reports.length === 0) {
             if (dataResult.persona) reports = [dataResult.persona];
@@ -184,21 +170,16 @@ async function iniciarPortal(dniParaBuscar) {
             }
         }
 
-        // Ordenar y seleccionar (Tu lógica original)
-        const sortedReports = [...reports].sort((a, b) => {
-            const parseDate = (dateStr) => {
-                if(!dateStr) return new Date(0);
-                const parts = dateStr.split('/');
-                return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-            };
-            return parseDate(b.FECHAX) - parseDate(a.FECHAX);
-        });
-
-        allReports = sortedReports;
-        const selectedReport = sortedReports[0];
+        // --- AQUÍ ESTÁ LA MEJORA DE FECHAS ---
+        // Guardamos todo el historial ordenado
+        const sortedReports = [...reports]; // Asumimos que el server ya los manda ordenados
+        allReports = sortedReports; 
+        
+        // Seleccionamos el más reciente para empezar
+        const selectedReport = sortedReports[0]; 
         const dniToSearch = selectedReport.DNI;
 
-        // Carga de estudios (Tu lógica original)
+        // Carga de estudios
         const [
             resumenAI, labResult, mamografiaResult, ecografiaResult, ecomamariaResult,
             espirometriaResult, enfermeriaResult, densitometriaResult,
@@ -225,19 +206,14 @@ async function iniciarPortal(dniParaBuscar) {
             odontologia: odontologiaResult, biopsia: biopsiaResult
         };
 
-        // Cargar UI
         cargarPortalPersonal(selectedReport, resumenAI);
         
-        // Ocultar vista inicial
         const vistaInicial = document.getElementById('vista-inicial');
         if(vistaInicial) vistaInicial.style.display = 'none';
 
-        // --- MANEJO DE ADMIN UI ---
-        // 1. Ocultar el buscador grande (porque ya encontramos al paciente)
         const searchContainer = document.getElementById('search-container');
         if (searchContainer) searchContainer.style.display = 'none';
 
-        // 2. Si soy admin, mostrar el botón flotante "Buscar Otro"
         if (currentUser && currentUser.rol === 'admin') {
             const btnNueva = document.getElementById('btn-nueva-busqueda');
             if (btnNueva) btnNueva.style.display = 'block';
@@ -251,34 +227,29 @@ async function iniciarPortal(dniParaBuscar) {
     }
 }
 
-// CHECKEO DE SESIÓN AL INICIO
 document.addEventListener('DOMContentLoaded', () => {
-    // Si ya hay token guardado, podemos intentar loguear directo o mostrar botón "Ir a mi portal"
     if (authToken && currentUser) {
         console.log("Sesión detectada para:", currentUser.dni);
     }
 });
+
 // ==============================================================================
-// 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO
+// 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO (TU LÓGICA ORIGINAL)
 // ==============================================================================
 async function obtenerResumenAI(persona) {
     const textoGuardado = persona['REPORTE_MEDICO']; 
     if (textoGuardado && textoGuardado.trim().length > 10) {
         return textoGuardado;
     }
-    return null; // Esto es vital para que aparezca el botón
+    return null; 
 }
 
 async function obtenerLinkEstudios(dni, studyType) {
     const studyApiUrl = `${ESTUDIOS_API_URL}/api/buscar-estudios?dni=${dni}&tipo=${studyType}`;
-
     try {
         const response = await fetch(studyApiUrl);
         const data = await response.json();
-
-        if (response.status === 404) {
-            return { link: null, error: data.error, tipo: studyType, fechaResultado: null };
-        }
+        if (response.status === 404) return { link: null, error: data.error, tipo: studyType, fechaResultado: null };
 
         if (response.ok) {
             return { 
@@ -289,25 +260,20 @@ async function obtenerLinkEstudios(dni, studyType) {
                 fechaResultado: data.fechaResultado || (data.datos ? data.datos.fecha : null) || null 
             };
         } else {
-            const errorMessage = data.error || `Error del microservicio (${response.status})`;
-            throw new Error(errorMessage);
+            throw new Error(data.error || `Error del microservicio (${response.status})`);
         }
     } catch (error) {
-        console.error(`Fallo al buscar estudios complementarios (${studyType}):`, error);
-        return { 
-            link: null, 
-            error: `Servicio no disponible para ${studyType}.`,
-            tipo: studyType,
-            fechaResultado: null
-        };
+        return { link: null, error: `Servicio no disponible.`, tipo: studyType, fechaResultado: null };
     }
 }
 
+// ==============================================================================
+// 🔴 TU LÓGICA DE RIESGO COMPLETA (NO TOCAR)
+// ==============================================================================
 function getRiskLevel(key, value, edad, sexo) {
     const v = String(value || '').toLowerCase().trim();
     const k = key.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
     
-    // Detectamos si el valor indica que NO se realizó
     const noRealizado = v.includes('no se realiza') || v.includes('no realizado') || v === 'no' || 
                         v.includes('no corresponde') || v === '' || v.includes('no indicado') || 
                         v.includes('no aplica') || v.includes('pendiente');
@@ -317,17 +283,11 @@ function getRiskLevel(key, value, edad, sexo) {
         return { color: 'violet', icon: 'info', text: 'Dato Personal', customMsg: 'Información registrada en el sistema.' };
     }
 
-    // ==============================================================================
-    // 1. REGLAS CLÍNICAS ESPECÍFICAS
-    // ==============================================================================
-
     // --- PRÓSTATA (PSA) ---
     if (k.includes('PROSTATA') || k.includes('PSA')) {
-        // CASO 1: Si el resultado es NORMAL -> VERDE
         if (v.includes('normal') || v.includes('bajo') || v.includes('negativo') || v.includes('adecuado')) {
             return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Los valores están dentro de lo normal.' };
         }
-        // CASO 2: Si es "No aplica", "Pendiente", "No realizado"
         if (noRealizado) {
             if (edad >= 50) {
                 return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el control de PSA es fundamental. Te sugerimos realizarlo.' };
@@ -433,7 +393,7 @@ function getRiskLevel(key, value, edad, sexo) {
     }
 
     // ==============================================================================
-    // 2. LÓGICA GENERAL DE COLORES
+    // LÓGICA GENERAL DE COLORES
     // ==============================================================================
 
     if (['PROFESIONAL', 'FECHAX', 'DNI', 'MARCA TEMPORAL'].includes(k)) {
@@ -473,14 +433,16 @@ function getRiskLevel(key, value, edad, sexo) {
 }
 
 // ==============================================================================
-// 3. FUNCIONES DEL PORTAL PERSONAL DE SALUD (Dashboard y Pestañas)
+// 3. FUNCIONES DEL PORTAL PERSONAL (Dashboard y Pestañas)
 // ==============================================================================
 
 function cargarPortalPersonal(persona, resumenAI) {
     document.getElementById('vista-inicial').style.display = 'none';
     document.getElementById('portal-salud-container').style.display = 'block';
 
-    // Guardamos el sexo en una variable global para acceso rápido en las pestañas
+    // ACTUALIZAMOS EL REPORTE ACTUAL
+    reporteSeleccionado = persona;
+
     window.pacienteSexo = String(persona['Sexo'] || persona['sexo'] || '').toLowerCase().trim();
 
     cargarDiaPreventivoTab(persona, resumenAI); 
@@ -515,22 +477,43 @@ function mostrarPestana(tabId) {
     document.querySelectorAll('.tab-pane').forEach(tab => {
         tab.style.display = 'none';
     });
-
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active', 'bg-blue-600', 'text-white', 'border-blue-500');
         btn.classList.add('text-gray-700', 'hover:bg-gray-100');
     });
-
     document.getElementById(tabId).style.display = 'block';
-
     const activeBtn = document.getElementById('btn-' + tabId);
     if (activeBtn) {
         activeBtn.classList.add('active', 'bg-blue-600', 'text-white');
         activeBtn.classList.remove('text-gray-700', 'hover:bg-gray-100');
     }
 }
+
 // ==============================================================================
-// 4. CONTENIDO DE LAS PESTAÑAS (VERSIÓN CON ADMIN TOOLS)
+// 🆕 FUNCIÓN NUEVA: CAMBIAR EL INFORME AL ELEGIR FECHA
+// ==============================================================================
+async function updateDashboardContent(selectedIndex) {
+    // 1. Buscamos el reporte en el array usando el índice
+    const nuevoReporte = allReports[selectedIndex];
+
+    if (!nuevoReporte) {
+        console.error("No se encontró el reporte para el índice:", selectedIndex);
+        return;
+    }
+
+    // 2. Actualizamos la variable global
+    reporteSeleccionado = nuevoReporte;
+    
+    // 3. Obtenemos el texto de IA de ese reporte específico
+    // (Si no se generó antes, devolverá null y mostrará el botón)
+    const resumenAIFecha = await obtenerResumenAI(nuevoReporte);
+
+    // 4. Repintamos la pestaña respetando tu diseño original
+    cargarDiaPreventivoTab(nuevoReporte, resumenAIFecha);
+}
+
+// ==============================================================================
+// 4. CONTENIDO DE LAS PESTAÑAS (TU DISEÑO ORIGINAL + SELECTOR)
 // ==============================================================================
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
@@ -548,17 +531,13 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
 
-    // 1. SELECTOR DE FECHAS (Historial)
+    // 1. SELECTOR DE FECHAS (Historial) - MEJORADO
     let dateSelectorHTML = ''; 
     if (allReports.length > 1) { 
-        const dateOptions = allReports.map(report => {
-            const date = report.FECHAX;
-            const id = report.ID || date;
-            return { date, id };
-        });
-        const optionsHtml = dateOptions.map(opt => `
-            <option value="${opt.id}" ${opt.date === fechaInforme ? 'selected' : ''}>
-                Día Preventivo del ${opt.date} ${opt.date === fechaInforme ? ' (Actual)' : ''}
+        // Usamos el ÍNDICE como value para que sea infalible
+        const optionsHtml = allReports.map((report, index) => `
+            <option value="${index}" ${report.FECHAX === fechaInforme ? 'selected' : ''}>
+                Día Preventivo del ${report.FECHAX} ${index === 0 ? ' (Más Reciente)' : ''}
             </option>
         `).join('');
         dateSelectorHTML = `
@@ -573,8 +552,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         `;
     }
 
-    // 2. CONSTRUCCIÓN DEL HTML BASE
-    // NOTA: En lugar de pegar el resumen directo, ponemos un DIV vacío con ID "ai-summary-dynamic"
+    // 2. CONSTRUCCIÓN DEL HTML BASE (Tu diseño original)
     let dashboardHTML = `
         <h1 class="text-2xl font-bold mb-6 text-gray-800">
             <i class="fas fa-heartbeat mr-2 text-blue-600"></i> Mis resultados del Día Preventivo
@@ -590,14 +568,13 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
 
         <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
             <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Tu Resumen de Salud (Generado por IA)</h2>
-            
-            <div id="ai-summary-dynamic" class="mb-6 rounded-lg">
-                </div>
+            <div id="ai-summary-dynamic" class="mb-6 rounded-lg"></div>
+
             <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Detalle de Indicadores</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     `;
 
-    // 3. BUCLE DE INDICADORES (TARJETAS DE COLORES)
+    // 3. BUCLE DE INDICADORES (USA TU GETRISKLEVEL GIGANTE)
     for (const [key, value] of Object.entries(persona)) {
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'REPORTE_MEDICO'].includes(key)) {
             continue;
@@ -606,12 +583,10 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         const safeValue = String(value || '');
         const keyUpper = key.toUpperCase();
         
-        // Filtros de fechas y vacíos
         const isRawDate = keyUpper === 'RAWDATE' || safeValue.includes('RAWDATE');
         const isIsoDate = safeValue.includes('T') && safeValue.includes('Z') && safeValue.length > 15;
         if (isRawDate || isIsoDate || safeValue.trim() === '') continue;
 
-        // Filtro Sexo
         const keyNormalized = keyUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const terminosFemeninos = ['MAMOGRAFIA', 'ECO_MAMARIA', 'ECO MAMARIA', 'HPV', 'PAP', 'ACIDO FOLICO', 'UTERINO'];
         const terminosMasculinos = ['PROSTATA', 'PSA'];
@@ -619,7 +594,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         if (sexo === 'masculino' && terminosFemeninos.some(t => keyNormalized.includes(t))) continue;
         if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
 
-        // Riesgos
+        // AQUÍ USAMOS TU LÓGICA COMPLETA
         const risk = getRiskLevel(key, safeValue, edadPaciente, sexo);
         const colorMap = {
             red: 'bg-red-100 border-red-500 text-red-700',
@@ -653,20 +628,50 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     }
 
     dashboardHTML += `</div> </div>`;
-    
-    // 4. INYECTAR EL HTML EN LA PÁGINA
     dashboardContenedor.innerHTML = dashboardHTML;
 
-    // =========================================================================
-    // 5. LÓGICA DE INFORME IA (Aquí es donde insertamos los botones)
-    // =========================================================================
+    // 4. INYECTAR EL HTML DE LA IA
+    // Usamos el objeto "persona" (que es el reporte actual) para los botones
+    configurarSeccionIA(persona, resumenAI);
+
+    // 5. LISTENER DEL SELECTOR (Para que funcione el cambio)
+    if (allReports.length > 1) {
+        const selector = document.getElementById('report-date-selector');
+        if (selector) {
+            selector.addEventListener('change', (event) => {
+                updateDashboardContent(event.target.value); // Pasamos el índice
+            });
+        }
+    }
+
+    // Botones de acción inferior (Tu diseño original)
+    let accionesHTML = `
+        <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
+            <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
+            <p class="text-gray-700 mb-1"><span class="font-semibold">Teléfono Consultas:</span> <a href="tel:3424071702" class="text-blue-600 font-medium">342 407-1702</a></p>
+            <p class="text-gray-700"><span class="font-semibold">Mail de Consultas:</span> <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 font-medium">diapreventivoiapos@diapreventivo.com</a></p>
+        </div>
+        <div class="flex flex-wrap items-center justify-center py-4">
+            <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${(resumenAI || '').replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
+                <i class="fas fa-file-alt mr-2"></i> Informe Escrito (Ver/Imprimir)
+            </button>
+            <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
+                <i class="fas fa-share-alt mr-2"></i> Compartir Portal
+            </button>
+        </div>
+    `;
+    accionesContenedor.innerHTML = accionesHTML;
+}
+
+// ==============================================================================
+// 5. FUNCIONES IA (CON TU DISEÑO DE EDITOR Y BOTONES)
+// ==============================================================================
+function configurarSeccionIA(persona, resumenAI) {
     const containerAI = document.getElementById('ai-summary-dynamic');
-    
-    // Verificamos si resumenAI tiene contenido real (más de 10 letras) o es un error/vacío
     const tieneInformeGuardado = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
 
     if (tieneInformeGuardado) {
-        // CASO A: YA EXISTE UN INFORME (Se muestra limpio)
+        // YA EXISTE
         containerAI.innerHTML = `
             <div class="prose max-w-none p-4 bg-gray-50 border border-gray-200 rounded-lg">
                 <p class="text-base leading-relaxed" style="white-space: pre-line;">${resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>
@@ -674,10 +679,10 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             </div>
         `;
     } else if (currentUser && currentUser.rol === 'admin') {
-        // CASO B: SOY ADMIN Y NO HAY INFORME -> MOSTRAR HERRAMIENTAS
+        // ADMIN + NO HAY INFORME
         containerAI.innerHTML = `
             <div class="bg-yellow-50 p-6 rounded-lg border border-yellow-200 text-center">
-                <p class="text-yellow-800 font-bold mb-4"><i class="fas fa-exclamation-circle"></i> Este paciente aún no tiene un informe validado.</p>
+                <p class="text-yellow-800 font-bold mb-4"><i class="fas fa-exclamation-circle"></i> Este reporte del ${persona.FECHAX} no tiene informe validado.</p>
                 
                 <button id="btn-generar-ia" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition transform hover:scale-105">
                     <i class="fas fa-robot mr-2"></i> Generar Borrador con IA
@@ -699,97 +704,10 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             </div>
         `;
 
-        // LÓGICA DE LOS BOTONES
-        setTimeout(() => {
-            const btnGenerar = document.getElementById('btn-generar-ia');
-            const divEditor = document.getElementById('editor-borrador');
-            const txtArea = document.getElementById('texto-borrador');
-            const btnGuardar = document.getElementById('btn-guardar-excel');
-            const btnCancelar = document.getElementById('btn-cancelar');
-
-            if (btnGenerar) {
-                // GENERAR
-                btnGenerar.onclick = async () => {
-                    btnGenerar.disabled = true;
-                    btnGenerar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Analizando datos...';
-                    
-                    try {
-                        // 👇👇 AQUÍ ESTABA EL ERROR: CORREGIMOS LA RUTA Y EL DATO 👇👇
-                        const resp = await fetch('/api/analizar-informe', { // Antes decía 'analizar-paciente'
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ persona: persona }) // Antes decía 'paciente: persona'
-                        });
-                        // 👆👆 AHORA COINCIDE CON TU SERVIDOR 👆👆
-
-                        const result = await resp.json();
-                        
-                        // Si el servidor devuelve error controlado
-                        if (!resp.ok) throw new Error(result.error || 'Error en la IA');
-
-                        // Usamos 'result.resumen' porque así lo devuelve tu API original
-                        txtArea.value = result.resumen || "Error al recibir texto.";
-                        
-                        divEditor.style.display = 'block';
-                        btnGenerar.style.display = 'none'; 
-
-                    } catch (e) {
-                        console.error(e);
-                        Swal.fire('Error', 'No se pudo conectar con la IA: ' + e.message, 'error');
-                        btnGenerar.disabled = false;
-                        btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Reintentar';
-                    }
-                };
-
-                // CANCELAR
-                btnCancelar.onclick = () => {
-                    divEditor.style.display = 'none';
-                    btnGenerar.style.display = 'inline-block';
-                    btnGenerar.disabled = false;
-                    btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Generar Borrador con IA';
-                };
-
-                // GUARDAR
-                btnGuardar.onclick = async () => {
-                    const textoFinal = txtArea.value.trim();
-                    if (!textoFinal) return Swal.fire('Atención', 'El informe está vacío.', 'warning');
-                    
-                    btnGuardar.disabled = true;
-                    btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
-
-                    try {
-                        const resp = await fetch('/api/guardar-reporte', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ 
-                                dni: persona.DNI,       // <--- ¿Esto está?
-                                nombre: persona['apellido y nombre'], // <--- ¡ESTO ES NUEVO! ¿Lo agregaste?
-                                reporteTexto: textoFinal 
-                            })
-                        });
-                        
-                        if (resp.ok) {
-                            Swal.fire({
-                                icon: 'success',
-                                title: '¡Guardado!',
-                                text: 'El informe ha sido validado y guardado en el Excel.',
-                                showConfirmButton: false,
-                                timer: 2000
-                            }).then(() => window.location.reload());
-                        } else {
-                            throw new Error('Error al guardar');
-                        }
-                    } catch (error) {
-                        Swal.fire('Error', 'Fallo al guardar: ' + error.message, 'error');
-                        btnGuardar.disabled = false;
-                        btnGuardar.innerHTML = '<i class="fas fa-save mr-2"></i> APROBAR Y GUARDAR';
-                    }
-                };
-            }
-        }, 100);
+        setTimeout(() => asignarEventosBotonesIA(persona), 100);
 
     } else {
-        // CASO C: SOY PACIENTE Y NO HAY INFORME
+        // PACIENTE + NO HAY INFORME
         containerAI.innerHTML = `
             <div class="bg-gray-100 p-6 rounded-lg text-center border border-gray-200">
                 <i class="fas fa-user-md text-4xl text-gray-400 mb-3"></i>
@@ -798,40 +716,96 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             </div>
         `;
     }
-
-
-    // 6. LISTENERS DE UI GENERAL (Fecha, botones inferiores)
-    if (allReports.length > 1) {
-        document.getElementById('report-date-selector').addEventListener('change', async (event) => {
-            const selectedId = event.target.value;
-            // Nota: updateDashboardContent no está en el código que me diste, 
-            // asegúrate de tener esa función o recargar la página con el nuevo ID
-            if (typeof updateDashboardContent === 'function') {
-                await updateDashboardContent(selectedId);
-            } else {
-                console.warn("Función updateDashboardContent no encontrada.");
-            }
-        });
-    }
-
-    // Botones de acción inferior
-    let accionesHTML = `
-        <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
-            <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
-            <p class="text-gray-700 mb-1"><span class="font-semibold">Teléfono Consultas:</span> <a href="tel:3424071702" class="text-blue-600 font-medium">342 407-1702</a></p>
-            <p class="text-gray-700"><span class="font-semibold">Mail de Consultas:</span> <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 font-medium">diapreventivoiapos@diapreventivo.com</a></p>
-        </div>
-        <div class="flex flex-wrap items-center justify-center py-4">
-            <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${(resumenAI || '').replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
-                <i class="fas fa-file-alt mr-2"></i> Informe Escrito (Ver/Imprimir)
-            </button>
-            <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
-                <i class="fas fa-share-alt mr-2"></i> Compartir Portal
-            </button>
-        </div>
-    `;
-    accionesContenedor.innerHTML = accionesHTML;
 }
+
+function asignarEventosBotonesIA(persona) {
+    const btnGenerar = document.getElementById('btn-generar-ia');
+    const divEditor = document.getElementById('editor-borrador');
+    const txtArea = document.getElementById('texto-borrador');
+    const btnGuardar = document.getElementById('btn-guardar-excel');
+    const btnCancelar = document.getElementById('btn-cancelar');
+
+    if (btnGenerar) {
+        btnGenerar.onclick = async () => {
+            btnGenerar.disabled = true;
+            btnGenerar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Analizando datos...';
+            
+            try {
+                // Pasamos el objeto "persona" COMPLETO, que tiene los datos del año seleccionado
+                const resp = await fetch('/api/analizar-informe', { 
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ persona: persona }) 
+                });
+
+                const result = await resp.json();
+                
+                if (!resp.ok) throw new Error(result.error || 'Error en la IA');
+
+                txtArea.value = result.resumen || "Error al recibir texto.";
+                
+                divEditor.style.display = 'block';
+                btnGenerar.style.display = 'none'; 
+
+            } catch (e) {
+                console.error(e);
+                Swal.fire('Error', 'No se pudo conectar con la IA: ' + e.message, 'error');
+                btnGenerar.disabled = false;
+                btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Reintentar';
+            }
+        };
+
+        btnCancelar.onclick = () => {
+            divEditor.style.display = 'none';
+            btnGenerar.style.display = 'inline-block';
+            btnGenerar.disabled = false;
+            btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Generar Borrador con IA';
+        };
+
+        btnGuardar.onclick = async () => {
+            const textoFinal = txtArea.value.trim();
+            if (!textoFinal) return Swal.fire('Atención', 'El informe está vacío.', 'warning');
+            
+            btnGuardar.disabled = true;
+            btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
+
+            try {
+                const resp = await fetch('/api/guardar-reporte', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ 
+                        dni: persona.DNI, 
+                        nombre: persona['apellido y nombre'],
+                        reporteTexto: textoFinal 
+                    })
+                });
+                
+                if (resp.ok) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: '¡Guardado!',
+                        text: 'El informe ha sido validado y guardado en el Excel.',
+                        showConfirmButton: false,
+                        timer: 2000
+                    });
+                    // Actualizamos visualmente
+                    persona.REPORTE_MEDICO = textoFinal;
+                    configurarSeccionIA(persona, textoFinal);
+                } else {
+                    throw new Error('Error al guardar');
+                }
+            } catch (error) {
+                Swal.fire('Error', 'Fallo al guardar: ' + error.message, 'error');
+                btnGuardar.disabled = false;
+                btnGuardar.innerHTML = '<i class="fas fa-save mr-2"></i> APROBAR Y GUARDAR';
+            }
+        };
+    }
+}
+
+// ==============================================================================
+// 6. FUNCIONES DE ESTUDIOS COMPLEMENTARIOS (TU CÓDIGO ORIGINAL)
+// ==============================================================================
 
 function cargarEstudiosTab(estudiosResults) {
     const contenedor = document.getElementById('estudios-complementarios-lista');
@@ -857,7 +831,6 @@ function cargarEstudiosTab(estudiosResults) {
     window._cachedEnfermeriaData = null;
 
     estudiosMaestros.forEach(estudio => {
-        // FILTRO QUIRÚRGICO DE SEXO
         if (sexo === 'masculino' && estudio.soloMujeres) {
             return; 
         }
@@ -911,7 +884,7 @@ function cargarEstudiosTab(estudiosResults) {
 }
 
 // ==============================================================================
-// 5. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
+// 7. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
 // ==============================================================================
 
 function mostrarInformeEscrito(nombre, resumenAI) {
@@ -972,31 +945,6 @@ function imprimirContenido(elementId, title) {
         printWindow.focus();
         printWindow.print();
     }, 500);
-}
-
-async function testConexionEnfermeria(dni) {
-    console.log("🔍 Probando conexión para DNI:", dni);
-    try {
-        const response = await fetch('/api/buscar-enfermeria', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dni: dni })
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            console.log("⭐ ¡ÉXITO! Respuesta del servidor:");
-            console.table(result.raw); 
-            console.log("DNI en tabla:", result.dni_detectado);
-            console.log("Nombre en tabla:", result.nombre_detectado);
-            alert(`Conexión OK: Detectado ${result.nombre_detectado}`);
-        } else {
-            console.error("❌ Error en la respuesta:", result.error);
-        }
-    } catch (err) {
-        console.error("❌ Error de red:", err);
-    }
 }
 
 function abrirModalEnfermeria(datosRaw) {
@@ -1124,12 +1072,10 @@ function copyCurrentUrl() {
 // LÓGICA DE INTERFAZ DE ADMINISTRADOR
 // =======================================================
 
-// 1. Botón "BUSCAR" (El del cuadro grande)
 const btnBuscar = document.getElementById('btn-buscar');
 const inputBuscar = document.getElementById('dni-input');
 
 if (btnBuscar && inputBuscar) {
-    // Buscar al hacer clic
     btnBuscar.addEventListener('click', () => {
         const dniEscrito = inputBuscar.value.trim();
         if (dniEscrito) {
@@ -1139,13 +1085,13 @@ if (btnBuscar && inputBuscar) {
         }
     });
 
-    // Buscar al presionar ENTER
     inputBuscar.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
             btnBuscar.click();
         }
     });
 }
+
 // ==========================================
 // 🔒 FUNCIÓN PARA CAMBIAR CONTRASEÑA (CON NOMBRE Y DNI)
 // ==========================================
@@ -1229,13 +1175,12 @@ async function cambiarClave() {
         Swal.fire('Error', 'Error de conexión.', 'error');
     }
 }
+
 // 2. Botón flotante "BUSCAR OTRO PACIENTE"
 const btnNuevaBusqueda = document.getElementById('btn-nueva-busqueda');
 if (btnNuevaBusqueda) {
     btnNuevaBusqueda.addEventListener('click', () => {
-        // Volvemos a mostrar el buscador grande
         document.getElementById('search-container').style.display = 'flex';
-        // Limpiamos el campo para el nuevo DNI
         document.getElementById('dni-input').value = '';
         document.getElementById('dni-input').focus();
     });
