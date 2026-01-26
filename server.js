@@ -225,6 +225,56 @@ app.post('/api/analizar-informe', async (req, res) => {
     }
 });
 
+// ======================================================================
+// 🔐 RUTA CAMBIAR CONTRASEÑA (NUEVO)
+// ======================================================================
+app.post('/api/auth/cambiar-password', async (req, res) => {
+    console.log("🔐 Intentando cambiar contraseña...");
+    try {
+        const { dni, nuevaClave } = req.body;
+        
+        if (!dni || !nuevaClave) {
+            return res.status(400).json({ error: 'Faltan datos' });
+        }
+
+        // 1. Encriptamos la nueva clave para que sea segura
+        const hash = await bcrypt.hash(nuevaClave, 10);
+
+        const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+        
+        // 2. Buscamos al usuario en la hoja "Usuarios"
+        // NOTA: Asumimos que la hoja se llama "Usuarios" y la Columna A es el DNI
+        const resUsuarios = await sheets.spreadsheets.values.get({ 
+            spreadsheetId: SPREADSHEET_ID, 
+            range: `'Usuarios'!A:A` 
+        });
+        
+        const rows = resUsuarios.data.values || [];
+        // Buscamos la fila del DNI (ignorando comillas si las hubiera)
+        const rowIndex = rows.findIndex(r => r[0]?.toString().replace("'", "").trim() == dni.toString().trim());
+
+        if (rowIndex === -1) {
+            return res.status(404).json({ error: 'Usuario no encontrado en la base de datos.' });
+        }
+
+        // 3. Guardamos la NUEVA clave encriptada en la Columna B (que es la 2da columna)
+        // rowIndex + 1 porque Excel empieza en fila 1, no 0
+        await sheets.spreadsheets.values.update({ 
+            spreadsheetId: SPREADSHEET_ID, 
+            range: `'Usuarios'!B${rowIndex + 1}`, 
+            valueInputOption: 'RAW', 
+            resource: { values: [[hash]] } 
+        });
+
+        console.log(`✅ Contraseña actualizada para DNI ${dni}`);
+        res.json({ success: true });
+
+    } catch (e) { 
+        console.error("❌ ERROR AL CAMBIAR CLAVE:", e.message);
+        res.status(500).json({ error: 'Error al actualizar: ' + e.message }); 
+    }
+});
+
 // START
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

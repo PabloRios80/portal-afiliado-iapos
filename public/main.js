@@ -1146,7 +1146,89 @@ if (btnBuscar && inputBuscar) {
         }
     });
 }
+// ==========================================
+// 🔒 FUNCIÓN PARA CAMBIAR CONTRASEÑA (CON NOMBRE Y DNI)
+// ==========================================
+async function cambiarClave() {
+    // 1. Verificar sesión
+    const usuarioLogueadoStr = localStorage.getItem('iapos_user');
+    
+    if (!usuarioLogueadoStr) {
+        Swal.fire('Alto ahí ✋', 'Debes iniciar sesión primero para cambiar tu clave.', 'warning');
+        return;
+    }
 
+    const usuarioLogueado = JSON.parse(usuarioLogueadoStr);
+
+    // 2. Mostrar A QUIÉN le vamos a cambiar la clave (Para que no te asustes)
+    const { isConfirmed } = await Swal.fire({
+        title: '🔒 Cambio de Seguridad',
+        html: `Vas a cambiar la contraseña del usuario:<br>
+               <b>DNI: ${usuarioLogueado.dni}</b><br>
+               <small>(Si no eres tú, cancela y cierra sesión)</small>`,
+        icon: 'info',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, continuar',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (!isConfirmed) return;
+
+    // 3. Pedir la nueva clave
+    const { value: nueva } = await Swal.fire({
+        title: 'Nueva Contraseña',
+        input: 'password',
+        inputLabel: 'Ingresa la nueva clave',
+        inputPlaceholder: 'Mínimo 4 caracteres',
+        showCancelButton: true
+    });
+
+    if (!nueva) return;
+
+    if (nueva.length < 4) {
+        Swal.fire('Muy corta', 'La contraseña debe tener al menos 4 caracteres.', 'warning');
+        return;
+    }
+
+    // 4. Confirmar la nueva clave
+    const { value: confirmacion } = await Swal.fire({
+        title: 'Confirma la Contraseña',
+        input: 'password',
+        inputLabel: 'Escríbela de nuevo',
+        showCancelButton: true
+    });
+
+    if (nueva !== confirmacion) {
+        Swal.fire('Error', 'Las contraseñas no coinciden. Intenta de nuevo.', 'error');
+        return;
+    }
+
+    // 5. Enviar al servidor
+    try {
+        Swal.showLoading(); // Mostramos relojito de carga
+        
+        const response = await fetch('/api/auth/cambiar-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                dni: usuarioLogueado.dni, 
+                nuevaClave: nueva 
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            Swal.fire('¡Listo! 🚀', 'Tu contraseña se cambió correctamente.', 'success');
+        } else {
+            Swal.fire('Error', data.error || 'No se pudo cambiar.', 'error');
+        }
+
+    } catch (error) {
+        console.error("Error cambiarClave:", error);
+        Swal.fire('Error', 'Error de conexión.', 'error');
+    }
+}
 // 2. Botón flotante "BUSCAR OTRO PACIENTE"
 const btnNuevaBusqueda = document.getElementById('btn-nueva-busqueda');
 if (btnNuevaBusqueda) {
