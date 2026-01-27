@@ -274,10 +274,9 @@ async function obtenerLinkEstudios(dni, studyType) {
     }
 }
 // ==============================================================================
-// 🔴 LÓGICA DE RIESGO (VERSIÓN FINAL CON PATOLOGÍAS Y ALERTAS)
+// 🔴 LÓGICA DE RIESGO (CORREGIDA: PRIORIDAD A RESULTADOS NEGATIVOS/VERDES)
 // ==============================================================================
 function getRiskLevel(key, value, edad, sexo) {
-    // Normalización para ignorar mayúsculas, minúsculas y acentos
     const v = String(value || '').toLowerCase().trim();
     const k = key.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
     
@@ -291,154 +290,117 @@ function getRiskLevel(key, value, edad, sexo) {
     }
 
     // ==========================================
-    // 1. REGLAS CARDIOVASCULARES Y CRÓNICAS
+    // 1. REGLAS ESPECÍFICAS (HÁBITOS Y PSICOSOCIAL)
     // ==========================================
 
-    // --- ESTRATIFICACIÓN RIESGO CV (NUEVO) ---
+    // --- ABUSO ALCOHOL ---
+    if (k.includes('ALCOHOL')) {
+        // 1. PRIMERO chequeamos lo bueno (Verde)
+        if (v.includes('no abusa') || v.includes('no') || v.includes('sin riesgo')) {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Mantiene un consumo responsable o nulo.' };
+        }
+        // 2. DESPUÉS chequeamos lo malo (Rojo)
+        if (v.includes('abusa') || v.includes('si') || v.includes('riesgo')) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Consumo de riesgo detectado. Busque asesoramiento profesional.' };
+        }
+    }
+
+    // --- TABACO ---
+    if (k.includes('TABACO') || k.includes('FUMA')) {
+        // 1. PRIMERO chequeamos lo bueno (Verde)
+        if (v.includes('no fuma') || v.includes('no')) {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Felicitaciones! Vivir libre de humo es la mejor decisión.' };
+        }
+        // 2. DESPUÉS chequeamos lo malo (Rojo)
+        if (v.includes('fuma') || v.includes('si') || v.includes('fumador')) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'El tabaquismo daña su salud. Consultar programas de cesación.' };
+        }
+    }
+
+    // --- VIOLENCIA ---
+    if (k.includes('VIOLENCIA')) {
+        // 1. Verde
+        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No se detectan indicadores de riesgo en este aspecto.' };
+        }
+        // 2. Rojo
+        if (v.includes('se verifica') || v.includes('si') || v.includes('detectada')) {
+            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Situación de riesgo. IAPOS cuenta con equipos de contención.' };
+        }
+    }
+
+    // --- DEPRESIÓN ---
+    if (k.includes('DEPRESION')) {
+        // 1. Verde
+        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Estado de ánimo estable según el tamizaje.' };
+        }
+        // 2. Rojo
+        if (v.includes('se verifica') || v.includes('si') || v.includes('detectada')) {
+            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Signos detectados. La salud mental es prioridad, consulte.' };
+        }
+    }
+
+    // --- CAÍDAS EN ADULTOS MAYORES ---
+    if (k.includes('CAIDA')) {
+        // 1. Verde
+        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Sin riesgo elevado de caídas detectado.' };
+        }
+        // 2. Rojo
+        if (v.includes('se verifica') || v.includes('presenta') || v.includes('si')) {
+            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo de caídas detectado. Se sugiere evaluar el entorno.' };
+        }
+    }
+
+    // --- SEGURIDAD VIAL ---
+    if (k.includes('SEGURIDAD') && k.includes('VIAL')) {
+        if (v.includes('no cumple')) {
+            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo alto. Use cinturón/casco y respete las normas.' };
+        }
+        if (v.includes('cumple')) {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Cumple con las normas de seguridad.' };
+        }
+    }
+
+    // ==========================================
+    // 2. REGLAS CLÍNICAS Y PATOLÓGICAS
+    // ==========================================
+
+    // --- ESTRATIFICACIÓN RIESGO CV ---
     if (k.includes('ESTRATIFICACION') || k.includes('RIESGO CV') || k.includes('GLOBAL')) {
-        if (v.includes('alto') || v.includes('muy alto')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo Cardiovascular ALTO. Seguimiento estricto necesario.' };
-        }
-        if (v.includes('medio') || v.includes('moderado')) {
-            return { color: 'yellow', icon: 'exclamation', text: 'Precaución', customMsg: 'Riesgo Moderado. Se sugieren controles periódicos.' };
-        }
-        if (v.includes('bajo')) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Riesgo Bajo. ¡Sigue cuidándote así!' };
-        }
+        if (v.includes('alto') || v.includes('muy alto')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo Cardiovascular ALTO. Seguimiento estricto necesario.' };
+        if (v.includes('medio') || v.includes('moderado')) return { color: 'yellow', icon: 'exclamation', text: 'Precaución', customMsg: 'Riesgo Moderado. Se sugieren controles periódicos.' };
+        if (v.includes('bajo')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Riesgo Bajo. ¡Sigue cuidándote así!' };
     }
 
     // --- ANEURISMA DE AORTA ---
     if (k.includes('ANEURISMA') || k.includes('AORTA')) {
-        // Alerta Patológica
         if (v.includes('se verifica') || v.includes('detectado') || v.includes('presente') || v === 'si') {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente a especialista.' };
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
         }
-        // Lógica por edad (si no está realizado)
         if (noRealizado) {
-            if (sexo === 'masculino' && edad >= 75) {
-                return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'Indicado en varones mayores de 75.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Indicado solo en varones mayores de 75 años.' };
-            }
+            if (sexo === 'masculino' && edad >= 75) return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'Indicado en varones mayores de 75.' };
+            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Indicado solo en varones mayores de 75 años.' };
         }
     }
 
     // --- EPOC ---
     if (k.includes('EPOC') || k.includes('ESPIROMETRIA')) {
-        // Alerta Patológica
         if (v.includes('se verifica') || v.includes('detectado') || v.includes('obstruccion') || v === 'si') {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Signos de EPOC detectados. Requiere tratamiento y seguimiento.' };
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Signos de EPOC detectados. Requiere tratamiento.' };
         }
         if (noRealizado) {
             return { color: 'gray', icon: 'info', text: 'Condicional', customMsg: 'Este estudio se realiza solo en fumadores.' };
         }
     }
 
-    // --- ERC (ENFERMEDAD RENAL CRÓNICA) ---
+    // --- ERC (RENAL) ---
     if (k.includes('ERC') || k.includes('RENAL') || k.includes('RIÑON')) {
         if (v.includes('patologic') || v.includes('anormal') || v.includes('alterad') || v.includes('estadio')) {
-             // Si dice "estadio 1, 2, 3..." suele ser patológico
             return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Función renal alterada. Consulte a su médico.' };
         }
     }
-
-    // --- OSTEOPOROSIS ---
-    if (k.includes('OSTEOPOROSIS') || k.includes('DENSITOMETRIA') || k.includes('OSEA') || k.includes('DMO')) {
-        // Alerta Patológica
-        if (v.includes('se verifica') || v.includes('osteoporosis') || v.includes('osteopenia') || v === 'si') {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Densidad ósea reducida. Importante prevenir caídas.' };
-        }
-        // Lógica por edad
-        if (noRealizado) {
-            if ((sexo === 'femenino' && edad >= 64) || (sexo === 'masculino' && edad >= 70)) {
-                return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Por tu edad, este estudio es fundamental.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio preventivo para mayores de 64 años.' };
-            }
-        }
-    }
-
-    // --- ASPIRINA ---
-    if (k.includes('ASPIRINA')) {
-        if (v.includes('no indicad') || noRealizado) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No requerida. Su riesgo cardiovascular no indica medicación.' };
-        }
-        if (v.includes('indicad')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Indicada por riesgo CV. No suspender sin orden médica.' };
-        }
-    }
-
-    // ==========================================
-    // 2. REGLAS ONCOLÓGICAS Y SCREENING
-    // ==========================================
-
-    // --- CÁNCER DE MAMA (MAMOGRAFÍA Y ECO) ---
-    if (k.includes('MAMOGRAFIA') || k.includes('MAMOGRAFÍA') || k.includes('ECO MAMARIA')) {
-        // Alerta Patológica
-        if (v.includes('patologic') || v.includes('anormal') || v.includes('birads 4') || v.includes('birads 5') || v.includes('sospech')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado con hallazgos. Requiere consulta ginecológica urgente.' };
-        }
-        // Lógica por edad
-        if (noRealizado) {
-            if (edad >= 40) {
-                return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 40 años.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 40 años.' };
-            }
-        }
-    }
-
-    // --- CÁNCER DE COLON (SOMF Y COLONOSCOPIA) ---
-    if (k.includes('SOMF') || k.includes('SANGRE OCULTA') || k.includes('COLON')) {
-        // Alerta Patológica
-        if (v.includes('patologic') || v.includes('positivo') || v.includes('anormal') || v.includes('polipo')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado patológico. Requiere seguimiento gastroenterológico.' };
-        }
-        // Lógica por edad
-        if (noRealizado) {
-            if (edad >= 50) {
-                return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 50 años.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 50 años.' };
-            }
-        }
-    }
-
-    // --- PAP / HPV (CUELLO UTERINO) ---
-    if (k.includes('PAP') || k.includes('PAPA') || k.includes('HPV') || k.includes('VPH')) {
-        // Alerta Patológica
-        if (v.includes('patologic') || v.includes('anormal') || v.includes('lesion') || v.includes('sil') || v.includes('cin') || v.includes('positivo')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado patológico. Requiere consulta ginecológica inmediata.' };
-        }
-        // Lógica por edad
-        if (noRealizado) {
-            if (k.includes('HPV') && edad > 30) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Test de VPH indicado mayores de 30 años.' };
-            if (k.includes('PAP') && edad > 21) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'PAP indicado en mujeres mayores de 21 años.' };
-            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Aún no tiene edad de screening.' };
-        }
-    }
-
-    // --- PRÓSTATA (PSA) ---
-    if (k.includes('PROSTATA') || k.includes('PSA')) {
-        if (v.includes('normal') || v.includes('bajo') || v.includes('negativo') || v.includes('adecuado')) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Los valores están dentro de lo normal.' };
-        }
-        // Si no es normal y no es "no realizado", asumimos patológico/alto
-        if (!noRealizado && (v.includes('elevado') || v.includes('alto') || v.includes('patologic'))) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Valor elevado. Consultar con urología.' };
-        }
-        if (noRealizado) {
-            if (edad >= 50) {
-                return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el control de PSA es fundamental.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Este estudio se indica generalmente a partir de los 50 años.' };
-            }
-        }
-    }
-
-    // ==========================================
-    // 3. HÁBITOS Y EXÁMENES FÍSICOS
-    // ==========================================
 
     // --- AGUDEZA VISUAL ---
     if (k.includes('AGUDEZA') || k.includes('VISUAL')) {
@@ -449,56 +411,84 @@ function getRiskLevel(key, value, edad, sexo) {
 
     // --- CONTROL ODONTOLÓGICO ---
     if (k.includes('ODONTO') || k.includes('BUCAL')) {
-        if (v === 'riesgo' || v.includes('alto riesgo')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Riesgo detectado. Solicitar turno urgente.' };
-        }
-        if (v.includes('medio') || v.includes('moderado')) {
-            return { color: 'yellow', icon: 'exclamation', text: 'Precaución', customMsg: 'Riesgo medio. Requiere control y seguimiento.' };
-        }
+        if (v === 'riesgo' || v.includes('alto riesgo')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Riesgo detectado. Solicitar turno urgente.' };
+        if (v.includes('medio') || v.includes('moderado')) return { color: 'yellow', icon: 'exclamation', text: 'Precaución', customMsg: 'Riesgo medio. Requiere control.' };
     }
 
-    // --- SEGURIDAD VIAL ---
-    if (k.includes('SEGURIDAD') && k.includes('VIAL')) {
-        if (v.includes('no cumple')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo alto. Use cinturón/casco y respete las normas.' };
-        }
-        if (v.includes('cumple')) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Cumple con las normas.' };
-        }
-    }
-
-    // --- CAÍDAS, VIOLENCIA, DEPRESIÓN (SE VERIFICA = ROJO) ---
-    if (k.includes('CAIDA') || k.includes('VIOLENCIA') || k.includes('DEPRESION')) {
-        if (v.includes('se verifica') || v.includes('si') || v.includes('detectada') || v.includes('presente')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Situación de riesgo detectada. Se sugiere atención profesional.' };
-        }
-    }
-
-    // --- ABUSO ALCOHOL Y TABACO ---
-    if (k.includes('ALCOHOL')) {
-        if (v.includes('abusa') || v.includes('si') || v.includes('riesgo')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Consumo de riesgo.' };
-        if (v.includes('no abusa') || v.includes('no')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Consumo responsable.' };
-    }
-    if (k.includes('TABACO') || k.includes('FUMA')) {
-        if (v.includes('fuma') || v === 'si') return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'El tabaquismo daña su salud.' };
-        if (v.includes('no')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Espacio libre de humo.' };
-    }
-
-    // --- INMUNIZACIONES ---
-    if (k.includes('INMUNIZACIONES') || k.includes('VACUNAS')) {
-        if (v.includes('incompleto') || v.includes('falta')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Esquema incompleto. Acuda al vacunatorio.' };
-        }
+    // --- ASPIRINA ---
+    if (k.includes('ASPIRINA')) {
+        if (v.includes('no indicad') || noRealizado) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No requerida. Su riesgo cardiovascular no indica medicación.' };
+        if (v.includes('indicad')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Indicada por riesgo CV. No suspender sin orden médica.' };
     }
 
     // --- ÁCIDO FÓLICO ---
     if (k.includes('ACIDO FOLICO') || k.includes('FOLICO')) {
-        if (v.includes('indicad') && !v.includes('no')) {
-            return { color: 'red', icon: 'exclamation', text: 'Recordatorio', customMsg: 'Importante si busca embarazo.' };
+        if (v.includes('indicad') && !v.includes('no')) return { color: 'red', icon: 'exclamation', text: 'Recordatorio', customMsg: 'Importante si busca embarazo.' };
+        if (noRealizado || v.includes('no indicad')) return { color: 'gray', icon: 'info', text: 'Informativo', customMsg: 'Se indica en mujeres que planean embarazo.' };
+    }
+
+    // --- OSTEOPOROSIS ---
+    if (k.includes('OSTEOPOROSIS') || k.includes('DENSITOMETRIA') || k.includes('OSEA') || k.includes('DMO')) {
+        if (v.includes('se verifica') || v.includes('osteoporosis') || v.includes('osteopenia') || v === 'si') {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Densidad ósea reducida. Importante prevenir caídas.' };
         }
-        if (noRealizado || v.includes('no indicad')) {
-            return { color: 'gray', icon: 'info', text: 'Informativo', customMsg: 'Se indica en mujeres que planean embarazo.' };
+        if (noRealizado) {
+            if ((sexo === 'femenino' && edad >= 64) || (sexo === 'masculino' && edad >= 70)) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Por tu edad, este estudio es fundamental.' };
+            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio preventivo para mayores de 64 años.' };
         }
+    }
+
+    // --- CÁNCER DE MAMA ---
+    if (k.includes('MAMOGRAFIA') || k.includes('MAMOGRAFÍA') || k.includes('ECO MAMARIA')) {
+        if (v.includes('patologic') || v.includes('anormal') || v.includes('birads 4') || v.includes('birads 5') || v.includes('sospech')) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Hallazgo detectado. Requiere consulta ginecológica.' };
+        }
+        if (noRealizado) {
+            if (edad >= 40) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 40 años.' };
+            return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 40 años.' };
+        }
+    }
+
+    // --- CÁNCER DE COLON ---
+    if (k.includes('SOMF') || k.includes('SANGRE OCULTA') || k.includes('COLON')) {
+        if (v.includes('patologic') || v.includes('positivo') || v.includes('anormal') || v.includes('polipo')) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado patológico. Requiere seguimiento.' };
+        }
+        if (noRealizado) {
+            if (edad >= 50) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 50 años.' };
+            return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 50 años.' };
+        }
+    }
+
+    // --- PAP / HPV ---
+    if (k.includes('PAP') || k.includes('PAPA') || k.includes('HPV') || k.includes('VPH')) {
+        if (v.includes('patologic') || v.includes('anormal') || v.includes('lesion') || v.includes('sil') || v.includes('cin') || v.includes('positivo')) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado patológico. Requiere consulta ginecológica.' };
+        }
+        if (noRealizado) {
+            if (k.includes('HPV') && edad > 30) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Test de VPH indicado mayores de 30 años.' };
+            if (k.includes('PAP') && edad > 21) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'PAP indicado mayores de 21 años.' };
+            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Aún no tiene edad de screening.' };
+        }
+    }
+
+    // --- PRÓSTATA (PSA) ---
+    if (k.includes('PROSTATA') || k.includes('PSA')) {
+        if (v.includes('normal') || v.includes('bajo') || v.includes('negativo') || v.includes('adecuado')) {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Los valores están dentro de lo normal.' };
+        }
+        if (!noRealizado && (v.includes('elevado') || v.includes('alto') || v.includes('patologic'))) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Valor elevado. Consultar con urología.' };
+        }
+        if (noRealizado) {
+            if (edad >= 50) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el control es fundamental.' };
+            return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se indica a partir de los 50 años.' };
+        }
+    }
+
+    // --- INMUNIZACIONES ---
+    if (k.includes('INMUNIZACIONES') || k.includes('VACUNAS')) {
+        if (v.includes('incompleto') || v.includes('falta')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Esquema incompleto. Acuda al vacunatorio.' };
     }
 
     // --- ALIMENTACIÓN ---
@@ -511,36 +501,27 @@ function getRiskLevel(key, value, edad, sexo) {
     // 4. SEMÁFORO GENERAL DE COLORES (FALLBACK)
     // ==========================================
 
-    if (['PROFESIONAL', 'FECHAX', 'DNI', 'MARCA TEMPORAL'].includes(k)) {
-        return { color: 'gray', icon: 'info', text: 'Informativo' };
-    }
+    if (['PROFESIONAL', 'FECHAX', 'DNI', 'MARCA TEMPORAL'].includes(k)) return { color: 'gray', icon: 'info', text: 'Informativo' };
 
     // --- VERDE (Excelente) ---
-    if (v === 'si' || v === 'sí' || v === 'buena' ||
-        v.includes('no presenta') || v.includes('normal') || v.includes('adecuada') || 
-        v.includes('no abusa') || v.includes('no se verifica') || v.includes('no fuma') || 
-        v.includes('cumple') || v.includes('bajo') || 
-        (v.includes('realiza') && !v.includes('no')) || 
-        v.includes('completo') || v.includes('negativo') || v.includes('riesgo bajo')) {
+    if (v === 'si' || v === 'sí' || v === 'buena' || v.includes('normal') || v.includes('adecuada') || 
+        v.includes('no presenta') || v.includes('no se verifica') || v.includes('no fuma') || 
+        v.includes('cumple') || v.includes('bajo') || (v.includes('realiza') && !v.includes('no')) || 
+        v.includes('completo') || v.includes('negativo')) {
         return { color: 'green', icon: 'check', text: 'Calma' };
     }
 
     // --- ROJO (Alerta) ---
-    if (v === 'no' || v === 'No' ||
-        v.includes('sí presenta') || v.includes('presenta') || v.includes('elevado') || 
-        v.includes('anormal') || v.includes('alto') || v.includes('no control') || 
-        v.includes('no realiza') || v.includes('pendiente') || v.includes('riesgo alto') || 
-        v.includes('positivo') || v.includes('incompleto') || v.includes('obesidad') || 
-        v.includes('hipertensión') || v.includes('patologic')) {
+    if (v === 'no' || v === 'No' || v.includes('presenta') || v.includes('elevado') || v.includes('anormal') || 
+        v.includes('alto') || v.includes('no control') || v.includes('no realiza') || v.includes('pendiente') || 
+        v.includes('riesgo alto') || v.includes('positivo') || v.includes('incompleto') || 
+        v.includes('obesidad') || v.includes('hipertensión') || v.includes('patologic')) {
         return { color: 'red', icon: 'times', text: 'Alerta' };
     }
 
     // --- AMARILLO (Precaución) ---
-    if (k.includes('IMC') && (v.includes('sobrepeso') || v.includes('bajo peso'))) {
-        return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
-    }
-    if (v.includes('mejorar') || v.includes('moderar') || v.includes('a vigilar') || 
-        v.includes('límite') || v.includes('riesgo moderado')) {
+    if (k.includes('IMC') && (v.includes('sobrepeso') || v.includes('bajo peso'))) return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
+    if (v.includes('mejorar') || v.includes('moderar') || v.includes('a vigilar') || v.includes('límite') || v.includes('riesgo moderado')) {
         return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
     }
 
