@@ -627,12 +627,19 @@ async function updateDashboardContent(selectedIndex) {
 }
 
 // ==============================================================================
-// 4. CONTENIDO DE LAS PESTAÑAS (TU DISEÑO ORIGINAL + SELECTOR)
+// 4. CONTENIDO DE LAS PESTAÑAS (CORREGIDO PARA IMPRESIÓN)
 // ==============================================================================
 function cargarDiaPreventivoTab(persona, resumenAI) {
     const nombre = persona['apellido y nombre'] || 'Afiliado';
     const fechaInforme = persona['FECHAX'] || 'N/A';
     
+    // --- GUARDA GLOBAL: ESTO ARREGLA EL BOTÓN DE IMPRIMIR ---
+    // Guardamos los datos en una variable global para no pasarlos por HTML y evitar errores de comillas
+    window.datosImpresionActual = {
+        nombre: nombre,
+        texto: resumenAI || ''
+    };
+
     // --- OBTENCIÓN DE EDAD SEGURA ---
     const keyEdad = Object.keys(persona).find(k => k.toLowerCase() === 'edad');
     let edadPaciente = 0;
@@ -645,10 +652,9 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
 
-    // 1. SELECTOR DE FECHAS (Historial) - MEJORADO
+    // 1. SELECTOR DE FECHAS (Historial)
     let dateSelectorHTML = ''; 
     if (allReports.length > 1) { 
-        // Usamos el ÍNDICE como value para que sea infalible
         const optionsHtml = allReports.map((report, index) => `
             <option value="${index}" ${report.FECHAX === fechaInforme ? 'selected' : ''}>
                 Día Preventivo del ${report.FECHAX} ${index === 0 ? ' (Más Reciente)' : ''}
@@ -666,7 +672,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         `;
     }
 
-    // 2. CONSTRUCCIÓN DEL HTML BASE (Tu diseño original)
+    // 2. CONSTRUCCIÓN DEL HTML BASE
     let dashboardHTML = `
         <h1 class="text-2xl font-bold mb-6 text-gray-800">
             <i class="fas fa-heartbeat mr-2 text-blue-600"></i> Mis resultados del Día Preventivo
@@ -688,7 +694,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     `;
 
-    // 3. BUCLE DE INDICADORES (USA TU GETRISKLEVEL GIGANTE)
+    // 3. BUCLE DE INDICADORES
     for (const [key, value] of Object.entries(persona)) {
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'REPORTE_MEDICO'].includes(key)) {
             continue;
@@ -708,7 +714,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         if (sexo === 'masculino' && terminosFemeninos.some(t => keyNormalized.includes(t))) continue;
         if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
 
-        // AQUÍ USAMOS TU LÓGICA COMPLETA
+        // USA TU LÓGICA DE RIESGO
         const risk = getRiskLevel(key, safeValue, edadPaciente, sexo);
         const colorMap = {
             red: 'bg-red-100 border-red-500 text-red-700',
@@ -744,21 +750,21 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     dashboardHTML += `</div> </div>`;
     dashboardContenedor.innerHTML = dashboardHTML;
 
-    // 4. INYECTAR EL HTML DE LA IA
-    // Usamos el objeto "persona" (que es el reporte actual) para los botones
+    // 4. INYECTAR IA
     configurarSeccionIA(persona, resumenAI);
 
-    // 5. LISTENER DEL SELECTOR (Para que funcione el cambio)
+    // 5. LISTENER DEL SELECTOR
     if (allReports.length > 1) {
         const selector = document.getElementById('report-date-selector');
         if (selector) {
             selector.addEventListener('change', (event) => {
-                updateDashboardContent(event.target.value); // Pasamos el índice
+                updateDashboardContent(event.target.value); 
             });
         }
     }
 
-    // Botones de acción inferior (Tu diseño original)
+    // Botones de acción inferior (AQUÍ ESTÁ EL ARREGLO DEL BOTÓN)
+    // Fíjate que ahora onclick llama a mostrarInformeEscrito() SIN PARÁMETROS
     let accionesHTML = `
         <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
             <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
@@ -766,7 +772,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             <p class="text-gray-700"><span class="font-semibold">Mail de Consultas:</span> <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 font-medium">diapreventivoiapos@diapreventivo.com</a></p>
         </div>
         <div class="flex flex-wrap items-center justify-center py-4">
-            <button onclick="mostrarInformeEscrito('${nombre.replace(/'/g, "\\'")}', \`${(resumenAI || '').replace(/`/g, "\\`")}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
+            <button onclick="mostrarInformeEscrito()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
                 <i class="fas fa-file-alt mr-2"></i> Informe Escrito (Ver/Imprimir)
             </button>
             <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
@@ -776,7 +782,6 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     `;
     accionesContenedor.innerHTML = accionesHTML;
 }
-
 // ==============================================================================
 // 5. FUNCIONES IA (CON TU DISEÑO DE EDITOR Y BOTONES)
 // ==============================================================================
@@ -1000,8 +1005,12 @@ function cargarEstudiosTab(estudiosResults) {
 // ==============================================================================
 // 7. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
 // ==============================================================================
+function mostrarInformeEscrito() {
+    // Recuperamos los datos de la memoria segura
+    const datos = window.datosImpresionActual || { nombre: 'Afiliado', texto: '' };
+    const nombre = datos.nombre;
+    const resumenAI = datos.texto;
 
-function mostrarInformeEscrito(nombre, resumenAI) {
     const contactoHtml = `
         <p class="mt-6 text-sm text-gray-700 border-t pt-4 italic">
             Si desea mayor precisión sobre los resultados o hablar con un profesional del programa, no dude en conectarse a estos medios.
@@ -1132,7 +1141,6 @@ function abrirModalEnfermeria(datosRaw) {
     `;
     document.body.insertAdjacentHTML('beforeend', modalHTML);
 }
-
 function compartirDashboard() {
     Swal.fire({
         title: 'Compartir Portal de Salud',
@@ -1142,7 +1150,7 @@ function compartirDashboard() {
                 <button onclick="copyCurrentUrl()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
                     <i class="fas fa-link mr-2"></i> Copiar Enlace del Portal
                 </button>
-                <button onclick="Swal.close(); mostrarInformeEscrito('${document.querySelector('#portal-salud-container h1')?.textContent || 'Afiliado'}', \`${document.querySelector('.prose')?.innerHTML || 'No disponible'}\`)" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                <button onclick="Swal.close(); mostrarInformeEscrito()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
                     <i class="fas fa-file-pdf mr-2"></i> Generar PDF (a través de Imprimir)
                 </button>
             </div>
