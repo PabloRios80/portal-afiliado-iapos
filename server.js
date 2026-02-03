@@ -1,4 +1,15 @@
 require('dotenv').config();
+console.log("-----------------------------------------");
+console.log("🔍 DIAGNÓSTICO DE VARIABLES DE ENTORNO:");
+console.log("Puerto:", process.env.PORT || "❌ NO DETECTADO");
+console.log("Hoja Cálculo:", process.env.SPREADSHEET_ID ? "✅ OK" : "❌ NO DETECTADO");
+console.log("API Key IA:", process.env.GEMINI_API_KEY ? "✅ OK" : "❌ NO DETECTADO");
+
+if (!process.env.GEMINI_API_KEY) {
+    console.error("🚨 ERROR CRÍTICO: El archivo .env no se está leyendo.");
+    console.error("👉 Asegúrate de que el archivo se llame solo '.env' y no '.env.txt'");
+}
+console.log("-----------------------------------------");
 const express = require('express');
 const { google } = require('googleapis');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -220,57 +231,108 @@ app.post('/api/guardar-reporte', async (req, res) => {
         res.status(500).json({ error: 'Error Excel: ' + e.message }); 
     }
 });
+// ======================================================================
+// 🧠 CEREBRO IAPOS (REGLAS + FORMATO FINAL)
+// ======================================================================
+const REGLAS_IAPOS = `
+ERES UN ASISTENTE MÉDICO DEL PROGRAMA "DÍA PREVENTIVO" DE IAPOS.
+TU OBJETIVO: Generar un informe HTML visualmente atractivo, cálido y profesional.
 
-// ======================================================================
-// 🧠 RUTA IA: TONO "MÉDICO MODERNO" + ICONOS + FORMATO VISUAL
-// ======================================================================
+REGLAS MÉDICAS (SÍGUELAS ESTRICTAMENTE):
+1. **Frecuencia:** Anual.
+2. **Cáncer de Mama:** Mamografía ≥ 40 años.
+3. **Cáncer de Colon:** SOMF ≥ 50 años. Si SOMF+ alerta roja para VCC.
+4. **Próstata:** PSA hombres ≥ 50 años.
+5. **Salud Mujer (HPV/PAP):**
+   - < 26 años: NO pedir estudios. Recomendar VACUNA HPV si no la tiene.
+   - 26-29 años: PAP solo si hay indicación.
+   - ≥ 30 años: Test HPV obligatorio. Si es negativo (-), explicar que no necesita repetir por 3 años (riesgo nulo).
+6. **Alertas:** Fumar, Alcohol, Seguridad Vial (No cumple), Violencia, Depresión.
+
+ESTRUCTURA VISUAL OBLIGATORIA (HTML TAILWIND):
+1.  **CUADRO RESUMEN (AL PRINCIPIO):**
+    Crea una tabla con bordes suaves que diga: Fecha del Examen, Profesional Responsable, Efector (Lugar), DNI, Paciente (Nombre Completo).
+    Usa clases: <div class="overflow-x-auto mb-6"><table class="min-w-full text-sm text-left text-gray-600 border border-gray-200 rounded-lg">...
+
+2.  **SALUDO E INTRODUCCIÓN (TEXTUAL):**
+    "Hola [Nombre Pila],"
+    "Te felicitamos por haberte decidido a hacer el Día Preventivo y pensar en la prevención de manera seria y responsable."
+    "Este es un resumen de tu Día Preventivo, confeccionado con asistencia de Inteligencia Artificial pero basado estrictamente en el informe de tu médico preventivista, el/la Dr./Dra. [Apellido Médico], quien ha analizado todos tus resultados."
+
+3.  **CUERPO DEL INFORME:**
+    - Usa tarjetas de colores para los resultados (Verde/Amarillo/Rojo/Azul).
+    - Usa Iconos/Emojis.
+
+4.  **CIERRE:**
+    "Saludos cordiales del Equipo IAPOS." (SIN FIRMA DEL MÉDICO ABAJO).
+`;
 
 function construirPrompt(datosPersona) {
     const datosJson = JSON.stringify(datosPersona, null, 2);
+    // Intentamos obtener datos del médico y lugar para el cuadro
     const nombreMedico = datosPersona['Profesional'] || 'Equipo Médico IAPOS';
+    const efector = datosPersona['Efector'] || 'IAPOS';
+    const fecha = datosPersona['FECHAX'] || new Date().toLocaleDateString();
     
-    // Extraemos solo el nombre de pila para el saludo (ej: "Melani")
-    // Suponemos formato "Aguiar Melani Solange", tomamos el segundo elemento
-    let partesNombre = datosPersona['apellido y nombre'].split(' ');
+    let partesNombre = (datosPersona['apellido y nombre'] || 'Afiliado').split(' ');
     let nombrePila = partesNombre.length > 1 ? partesNombre[1] : partesNombre[0];
+    nombrePila = nombrePila.replace(/['"]/g, "");
 
-    return `Actúa como el Dr./Dra. ${nombreMedico}, del equipo de salud de IAPOS.
-    Genera un informe médico visual y fácil de leer para el paciente.
+    return `Actúa como asistente de IAPOS.
+    
+    CONTEXTO Y REGLAS:
+    ${REGLAS_IAPOS}
 
-    INSTRUCCIONES DE DISEÑO Y TONO:
-    1.  **Encabezado:** Mantenlo formal (Fecha, Profesional, Paciente, DNI, Edad).
-    2.  **Saludo:** "Hola ${nombrePila}", cálido pero profesional.
-    3.  **Cuerpo Visual:**
-        * Usa **ICONOS** (emojis) al inicio de cada punto (ej: 🫀 para corazón, 🦷 para dientes, 💉 para vacunas, 🥗 para hábitos).
-        * Usa **SEMÁFOROS** claros:
-            * 🟢 (Verde/Excelente): Para valores normales.
-            * 🟡 (Amarillo/Alerta): Para advertencias leves.
-            * 🔴 (Rojo/Acción): Para riesgos o estudios faltantes importantes.
-    4.  **Estilo de Escritura:** Directo y moderno. No uses lenguaje legal ("Me dirijo a usted en mi carácter de..."). Habla claro: "Tus valores están bien", "Necesitamos ver esto".
-    5.  **Cierre:** "Saludos cordiales, Dr./Dra. ${nombreMedico}". **NO** pongas número de matrícula.
+    TU TAREA:
+    Genera el **cuerpo del informe en HTML puro**.
+    
+    DATOS PARA EL CUADRO RESUMEN:
+    - Fecha: ${fecha}
+    - Profesional: ${nombreMedico}
+    - Efector: ${efector}
+    - Paciente: ${datosPersona['apellido y nombre']}
+    - DNI: ${datosPersona['DNI']}
 
-    CONTENIDO MÉDICO:
-    * Felicita los hábitos saludables.
-    * Explica claramente por qué es importante hacerse el PAP/HPV o ir al odontólogo si falta, pero sin tono de regaño.
-
-    DATOS A PROCESAR:
+    DATOS CLÍNICOS A PROCESAR:
     ${datosJson}`;
 }
-
 function limpiarRespuesta(texto) {
-    let limpio = texto.replace(/```[\s\S]*?```/g, "");
+    // 1. Quitar los bloques de código Markdown (```html, ```)
+    let limpio = texto.replace(/```html/gi, "").replace(/```/g, "");
+    
+    // 2. Quitar encabezados molestos si la IA los pone
     limpio = limpio.replace(/DATOS DEL PACIENTE/gi, "");
     limpio = limpio.replace(/REPORTE TÉCNICO/gi, "");
+    
+    // 3. (IMPORTANTE) A veces la IA pone el DOCTYPE o la etiqueta html, los quitamos
+    limpio = limpio.replace(/<!DOCTYPE html>/gi, "").replace(/<html>/gi, "").replace(/<\/html>/gi, "").replace(/<body>/gi, "").replace(/<\/body>/gi, "");
+
     return limpio.trim();
 }
+// ======================================================================
+// 🧠 RUTA IA: CÓDIGO DE RENDER + SEGURIDAD MÉDICA
+// ======================================================================
 
 app.post('/api/analizar-informe', async (req, res) => {
+    // 1. Validación rápida
     if (!req.body.persona) return res.status(400).json({ error: 'Faltan datos' });
-    console.log(`🧠 Generando informe moderno...`);
+    
+    console.log(`🧠 Generando informe para: ${req.body.persona['apellido y nombre']}...`);
 
     try {
-        const genAI = new GoogleGenerativeAI(GENAI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        
+        // Usamos el mismo modelo que en Render
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-flash-latest",
+            // 👇 ESTO ES LO ÚNICO AGREGADO (Vital para medicina)
+            safetySettings: [
+                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+            ]
+        });
 
         const prompt = construirPrompt(req.body.persona);
         const result = await model.generateContent(prompt);
@@ -280,11 +342,10 @@ app.post('/api/analizar-informe', async (req, res) => {
         res.json({ resumen: cleanText });
 
     } catch (error) {
-        console.error('🚨 ERROR IA:', error.message);
-        res.status(500).json({ error: 'Error IA: ' + error.message });
+        console.error('🚨 ERROR IA:', error); // Muestra el error real si pasa algo
+        res.status(500).json({ error: 'Error al generar informe: ' + error.message });
     }
 });
-
 // ======================================================================
 // 🔐 RUTA CAMBIAR CONTRASEÑA (NUEVO)
 // ======================================================================

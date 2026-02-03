@@ -14,6 +14,8 @@ let usuarioActual = null;
 let allReports = []; // Historial completo
 let cachedEstudiosResults = {};
 let reporteSeleccionado = null; // El reporte que se está mirando AHORA
+// Variable global temporal para guardar el borrador mientras se edita
+let borradorTemporalIA = "";
 
 // --- VARIABLES DE AUTENTICACIÓN ---
 let authToken = localStorage.getItem('iapos_token'); 
@@ -763,58 +765,219 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     `;
     accionesContenedor.innerHTML = accionesHTML;
 }
-// ==============================================================================
-// 5. FUNCIONES IA (CON TU DISEÑO DE EDITOR Y BOTONES)
-// ==============================================================================
 function configurarSeccionIA(persona, resumenAI) {
     const containerAI = document.getElementById('ai-summary-dynamic');
+    
+    // Verificamos si hay un informe válido
     const tieneInformeGuardado = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
 
     if (tieneInformeGuardado) {
-        // YA EXISTE
-        containerAI.innerHTML = `
-            <div class="prose max-w-none p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                <p class="text-base leading-relaxed" style="white-space: pre-line;">${resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>
-                ${currentUser.rol === 'admin' ? '<div class="mt-2 text-right"><span class="text-xs text-green-600 font-bold"><i class="fas fa-check-circle"></i> Informe validado y guardado en Excel</span></div>' : ''}
-            </div>
-        `;
+        // --- CASO A: YA EXISTE UN INFORME (MOSTRAR) ---
+        containerAI.innerHTML = resumenAI;
+        
+        // Si es admin, mostramos opción de editar
+        if (currentUser && currentUser.rol === 'admin') {
+            const btnEditar = document.createElement('div');
+            btnEditar.className = "mt-2 text-right border-t pt-2";
+            btnEditar.innerHTML = `
+                <span class="text-xs text-green-600 font-bold mr-2"><i class="fas fa-check-circle"></i> Validado</span>
+                <button id="btn-editar-existente" class="text-xs text-blue-600 underline cursor-pointer">Editar</button>
+            `;
+            containerAI.appendChild(btnEditar);
+            
+            // Asignamos evento manualmente para evitar errores
+            document.getElementById('btn-editar-existente').onclick = () => {
+                iniciarEditorIA(persona, containerAI, resumenAI);
+            };
+        }
+
     } else if (currentUser && currentUser.rol === 'admin') {
-        // ADMIN + NO HAY INFORME
-        containerAI.innerHTML = `
-            <div class="bg-yellow-50 p-6 rounded-lg border border-yellow-200 text-center">
-                <p class="text-yellow-800 font-bold mb-4"><i class="fas fa-exclamation-circle"></i> Este reporte del ${persona.FECHAX} no tiene informe validado.</p>
-                
-                <button id="btn-generar-ia" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition transform hover:scale-105">
-                    <i class="fas fa-robot mr-2"></i> Generar Borrador con IA
-                </button>
-
-                <div id="editor-borrador" style="display: none;" class="mt-6 text-left bg-white p-4 rounded-lg shadow-inner border border-gray-200">
-                    <h4 class="font-bold text-gray-700 mb-2">📝 Editar Borrador:</h4>
-                    <textarea id="texto-borrador" class="w-full h-64 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-sans text-sm"></textarea>
-                    
-                    <div class="mt-4 flex justify-end space-x-3">
-                        <button id="btn-cancelar" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg">
-                            Cancelar
-                        </button>
-                        <button id="btn-guardar-excel" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md flex items-center">
-                            <i class="fas fa-save mr-2"></i> APROBAR Y GUARDAR
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        setTimeout(() => asignarEventosBotonesIA(persona), 100);
-
+        // --- CASO B: SOY ADMIN Y NO HAY INFORME (MOSTRAR GENERADOR) ---
+        mostrarPanelGenerador(persona, containerAI);
     } else {
-        // PACIENTE + NO HAY INFORME
+        // --- CASO C: PACIENTE ---
         containerAI.innerHTML = `
             <div class="bg-gray-100 p-6 rounded-lg text-center border border-gray-200">
                 <i class="fas fa-user-md text-4xl text-gray-400 mb-3"></i>
-                <p class="text-gray-600 text-lg">El equipo médico está procesando sus resultados para generar un informe detallado.</p>
-                <p class="text-gray-500 text-sm mt-2">Por favor, vuelva a consultar a la brevedad.</p>
+                <p class="text-gray-600 text-lg">Informe en proceso.</p>
+            </div>`;
+    }
+}
+
+function mostrarPanelGenerador(persona, container) {
+    container.innerHTML = `
+        <div class="bg-yellow-50 p-6 rounded-lg border border-yellow-200 text-center">
+            <p class="text-yellow-800 font-bold mb-4">
+                <i class="fas fa-magic"></i> Generador de Informes IA
+            </p>
+            <button id="btn-generar-ia" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition transform hover:scale-105">
+                <i class="fas fa-robot mr-2"></i> Generar Borrador
+            </button>
+        </div>
+    `;
+
+    document.getElementById('btn-generar-ia').onclick = async function() {
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Analizando...';
+        
+        try {
+            const resp = await fetch('/api/analizar-informe', { 
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ persona: persona }) 
+            });
+            const result = await resp.json();
+            
+            if (!resp.ok) throw new Error(result.error || 'Error IA');
+
+            // Una vez tenemos el texto, iniciamos el editor
+            iniciarEditorIA(persona, container, result.resumen);
+
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'IA: ' + e.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-robot mr-2"></i> Reintentar';
+        }
+    };
+}
+
+function iniciarEditorIA(persona, container, textoInicial) {
+    // Guardamos en variable global
+    borradorTemporalIA = textoInicial;
+
+    // Inyectamos el HTML del editor con ESTILOS EN LÍNEA para asegurar la altura
+    container.innerHTML = `
+        <div class="bg-white p-2 rounded-lg border border-gray-300 shadow-sm">
+            <div class="flex border-b border-gray-200 mb-2">
+                <button id="tab-vista" class="flex-1 py-2 text-sm font-bold text-blue-600 border-b-2 border-blue-600 bg-blue-50">👁️ Vista Previa</button>
+                <button id="tab-codigo" class="flex-1 py-2 text-sm text-gray-500 hover:text-blue-600">📝 Editar Código</button>
             </div>
-        `;
+
+            <div id="vista-previa-box" style="min-height: 400px; max-height: 600px; overflow-y: auto; display: block;" class="p-4 border border-gray-100 rounded bg-gray-50">
+                ${textoInicial} </div>
+
+            <div id="codigo-box" style="display: none;">
+                <textarea id="texto-borrador" style="min-height: 400px;" class="w-full p-3 border border-gray-300 rounded font-mono text-xs bg-gray-800 text-green-400 focus:outline-none">${textoInicial}</textarea>
+            </div>
+
+            <div class="mt-3 flex justify-end space-x-3 border-t pt-3">
+                <button id="btn-cancelar-edicion" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+                    Cancelar
+                </button>
+                <button id="btn-guardar-edicion" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow flex items-center">
+                    <i class="fas fa-save mr-2"></i> GUARDAR
+                </button>
+            </div>
+        </div>
+    `;
+
+    // --- ASIGNACIÓN DE EVENTOS (Inmediatamente después de crear el HTML) ---
+
+    const tabVista = document.getElementById('tab-vista');
+    const tabCodigo = document.getElementById('tab-codigo');
+    const vistaBox = document.getElementById('vista-previa-box');
+    const codigoBox = document.getElementById('codigo-box');
+    const textarea = document.getElementById('texto-borrador');
+    
+    // Cambio de Pestañas
+    tabVista.onclick = () => {
+        // Al volver a vista previa, actualizamos el HTML desde el textarea
+        borradorTemporalIA = textarea.value;
+        vistaBox.innerHTML = borradorTemporalIA;
+        
+        vistaBox.style.display = 'block';
+        codigoBox.style.display = 'none';
+        
+        tabVista.className = "flex-1 py-2 text-sm font-bold text-blue-600 border-b-2 border-blue-600 bg-blue-50";
+        tabCodigo.className = "flex-1 py-2 text-sm text-gray-500 hover:text-blue-600";
+    };
+
+    tabCodigo.onclick = () => {
+        // Al ir a código, aseguramos que el textarea tenga el último valor
+        textarea.value = borradorTemporalIA;
+        
+        vistaBox.style.display = 'none';
+        codigoBox.style.display = 'block';
+        
+        tabCodigo.className = "flex-1 py-2 text-sm font-bold text-blue-600 border-b-2 border-blue-600 bg-blue-50";
+        tabVista.className = "flex-1 py-2 text-sm text-gray-500 hover:text-blue-600";
+    };
+
+    // Sincronización en tiempo real (mientras escribes en código)
+    textarea.addEventListener('input', () => {
+        borradorTemporalIA = textarea.value;
+    });
+
+    // Botón Cancelar
+    document.getElementById('btn-cancelar-edicion').onclick = () => {
+        // Recargamos la sección con los datos originales (sin guardar)
+        // O simplemente recargamos el dashboard para limpiar
+        configurarSeccionIA(persona, persona.REPORTE_MEDICO); // Vuelve al estado anterior
+    };
+
+    // Botón Guardar
+    document.getElementById('btn-guardar-edicion').onclick = async function() {
+        const btn = this;
+        const textoFinal = borradorTemporalIA; // Usamos la variable global sincronizada
+        
+        if (!textoFinal || textoFinal.length < 10) return Swal.fire('Atención', 'El informe está vacío.', 'warning');
+        
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
+
+        try {
+            const resp = await fetch('/api/guardar-reporte', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ 
+                    dni: persona.DNI, 
+                    nombre: persona['apellido y nombre'],
+                    reporteTexto: textoFinal 
+                })
+            });
+            
+            if (resp.ok) {
+                Swal.fire({
+                    icon: 'success',
+                    title: '¡Guardado!',
+                    showConfirmButton: false,
+                    timer: 1500
+                });
+                // Actualizamos el objeto local y la vista
+                persona.REPORTE_MEDICO = textoFinal;
+                configurarSeccionIA(persona, textoFinal); // Volvemos a modo visualización
+            } else {
+                throw new Error('Error al guardar');
+            }
+        } catch (error) {
+            Swal.fire('Error', 'Fallo al guardar: ' + error.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-save mr-2"></i> GUARDAR';
+        }
+    };
+}
+// Función extra por si quieres editar algo ya guardado
+function editarInformeExistente() {
+    const container = document.getElementById('ai-summary-dynamic');
+    // Usamos el reporte seleccionado global
+    if (reporteSeleccionado) {
+        mostrarEditorIA(reporteSeleccionado, container);
+        // Pre-llenamos el editor con lo que ya había
+        setTimeout(() => {
+            const txtArea = document.getElementById('texto-borrador');
+            const vista = document.getElementById('vista-previa-box');
+            const panelBoton = document.getElementById('panel-boton-generar');
+            const divEditor = document.getElementById('editor-borrador');
+
+            if(txtArea && window.tempInformeAI) {
+                txtArea.value = window.tempInformeAI;
+                vista.innerHTML = window.tempInformeAI;
+                panelBoton.style.display = 'none'; // Ocultar botón generar
+                divEditor.style.display = 'block'; // Mostrar editor directo
+            }
+        }, 200);
     }
 }
 
