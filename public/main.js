@@ -765,14 +765,25 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     `;
     accionesContenedor.innerHTML = accionesHTML;
 }
+
 function configurarSeccionIA(persona, resumenAI) {
     const containerAI = document.getElementById('ai-summary-dynamic');
     
     // Verificamos si hay un informe válido
     const tieneInformeGuardado = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
 
+    // --- CORRECCIÓN CRÍTICA: ACTUALIZAR MEMORIA DE IMPRESIÓN SIEMPRE ---
     if (tieneInformeGuardado) {
-        // --- CASO A: YA EXISTE UN INFORME (MOSTRAR) ---
+        window.datosImpresionActual = {
+            nombre: persona['apellido y nombre'] || 'Afiliado',
+            texto: resumenAI // Guardamos el HTML tal cual
+        };
+    }
+    // ------------------------------------------------------------------
+
+    if (tieneInformeGuardado) {
+        // --- CASO A: YA EXISTE UN INFORME ---
+        // Inyectamos el HTML directo
         containerAI.innerHTML = resumenAI;
         
         // Si es admin, mostramos opción de editar
@@ -781,18 +792,17 @@ function configurarSeccionIA(persona, resumenAI) {
             btnEditar.className = "mt-2 text-right border-t pt-2";
             btnEditar.innerHTML = `
                 <span class="text-xs text-green-600 font-bold mr-2"><i class="fas fa-check-circle"></i> Validado</span>
-                <button id="btn-editar-existente" class="text-xs text-blue-600 underline cursor-pointer">Editar</button>
+                <button id="btn-editar-existente" class="text-xs text-blue-600 underline cursor-pointer">Editar Texto</button>
             `;
             containerAI.appendChild(btnEditar);
             
-            // Asignamos evento manualmente para evitar errores
             document.getElementById('btn-editar-existente').onclick = () => {
                 iniciarEditorIA(persona, containerAI, resumenAI);
             };
         }
 
     } else if (currentUser && currentUser.rol === 'admin') {
-        // --- CASO B: SOY ADMIN Y NO HAY INFORME (MOSTRAR GENERADOR) ---
+        // --- CASO B: SOY ADMIN Y NO HAY INFORME ---
         mostrarPanelGenerador(persona, containerAI);
     } else {
         // --- CASO C: PACIENTE ---
@@ -1150,48 +1160,75 @@ function cargarEstudiosTab(estudiosResults) {
 // 7. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
 // ==============================================================================
 function mostrarInformeEscrito() {
-    // Recuperamos los datos de la memoria segura
-    const datos = window.datosImpresionActual || { nombre: 'Afiliado', texto: '' };
+    // 1. Intentamos recuperar los datos de la memoria segura
+    let datos = window.datosImpresionActual;
+    
+    // 2. Paracaídas: Si la memoria está vacía, intentamos leer lo que se ve en pantalla
+    if (!datos || !datos.texto) {
+        const divContenido = document.getElementById('ai-summary-dynamic');
+        // Nos aseguramos de no agarrar botones ni editores, solo el informe
+        if (divContenido && !divContenido.innerHTML.includes('<textarea')) {
+            datos = {
+                nombre: reporteSeleccionado ? reporteSeleccionado['apellido y nombre'] : 'Paciente',
+                texto: divContenido.innerHTML // Agarramos el HTML crudo
+            };
+        }
+    }
+
+    // Si sigue sin haber datos, alerta
+    if (!datos || !datos.texto || datos.texto.length < 10) {
+        return Swal.fire('Atención', 'No hay un informe generado disponible para imprimir.', 'warning');
+    }
+
     const nombre = datos.nombre;
-    const resumenAI = datos.texto;
+    // AQUÍ ESTÁ LA CLAVE: Usamos el texto directo, SIN .replace() que rompa el HTML
+    let resumenAI = datos.texto; 
+
+    // Limpieza extra por si quedaron botones de edición dentro del HTML guardado
+    if (resumenAI.includes('btn-editar-existente')) {
+        // Truco rápido para quitar la barrita de edición del HTML a imprimir
+        resumenAI = resumenAI.split('<div class="mt-2 text-right border-t pt-2">')[0];
+    }
 
     const contactoHtml = `
-        <p class="mt-6 text-sm text-gray-700 border-t pt-4 italic">
-            Si desea mayor precisión sobre los resultados o hablar con un profesional del programa, no dude en conectarse a estos medios.
-        </p>
-        <div class="mt-2 text-sm">
-            <p><span class="font-semibold">Teléfono:</span> 342 407-1702</p>
-            <p><span class="font-semibold">Mail:</span> diapreventivoiapos@diapreventivo.com</p>
+        <div class="mt-8 border-t-2 border-gray-300 pt-4">
+            <p class="text-sm text-gray-700 italic mb-2">
+                Este informe es un resumen preventivo. Para consultas específicas:
+            </p>
+            <div class="flex justify-between text-sm font-semibold text-blue-900">
+                <span><i class="fas fa-phone"></i> 342 407-1702</span>
+                <span><i class="fas fa-envelope"></i> diapreventivoiapos@diapreventivo.com</span>
+            </div>
         </div>
     `;
 
     const printableContent = `
-        <div class="p-6">
-            <h1 class="text-2xl font-bold mb-4 text-blue-800 border-b pb-2">Informe de Salud Generado por IA</h1>
-            <p class="mb-4 text-lg font-semibold">Paciente: ${nombre}</p>
-            <div class="prose max-w-none p-4 bg-gray-50 rounded-lg border leading-relaxed">
-                ${resumenAI.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}
+        <div class="p-8 bg-white">
+            <div class="text-center mb-6 border-b-2 border-blue-500 pb-4">
+                <h1 class="text-3xl font-bold text-blue-900">Informe de Salud Preventiva</h1>
+                <p class="text-lg text-gray-600 mt-2">Paciente: <b>${nombre}</b></p>
             </div>
+            
+            <div class="text-left text-gray-800 leading-relaxed">
+                ${resumenAI}
+            </div>
+
             ${contactoHtml}
         </div>
     `;
 
+    // Mostramos el modal
     Swal.fire({
-        title: 'Informe Escrito de la Inteligencia Artificial',
-        html: `
-            <div id="modal-informe-ai" class="text-left">${printableContent}</div>
-        `,
-        width: '80%',
+        html: `<div id="modal-informe-ai">${printableContent}</div>`,
+        width: '800px', // Un poco más ancho para que se vea bien el diseño
         showCancelButton: true,
-        confirmButtonText: '<i class="fas fa-print"></i> Imprimir Informe',
+        confirmButtonText: '<i class="fas fa-print"></i> Imprimir',
         cancelButtonText: 'Cerrar',
-        customClass: {
-            container: 'z-50',
-            popup: 'shadow-2xl'
-        },
+        confirmButtonColor: '#2563EB',
+        showCloseButton: true,
         focusConfirm: false,
         preConfirm: () => {
-            imprimirContenido('modal-informe-ai', `Informe AI - ${nombre}`);
+            imprimirContenido('modal-informe-ai', `Informe IAPOS - ${nombre}`);
             return false;
         }
     });
