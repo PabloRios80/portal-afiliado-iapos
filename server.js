@@ -241,12 +241,23 @@ TU OBJETIVO: Generar un informe HTML visualmente atractivo, cálido y profesiona
 REGLAS MÉDICAS (SÍGUELAS ESTRICTAMENTE):
 1. **Frecuencia:** Anual.
 2. **Cáncer de Mama:** Mamografía ≥ 40 años.
-3. **Cáncer de Colon:** SOMF ≥ 50 años. Si SOMF+ alerta roja para VCC.
+3. **Cáncer de Colon (SOMF/VCC):**
+   - **Regla de Oro:** El rastreo comienza a los 50 años.
+   - **Si SOMF es POSITIVO (+):** ALERTA ROJA. Indicar VCC obligatoria y explicar importancia de detectar pólipos a tiempo.
+   - **Si SOMF es NEGATIVO (-):**
+     * **Entre 50 y 60 años:** Felicitar por el negativo, PERO aclarar: "Es conveniente considerar una Colonoscopía (VCC) cada 5 años aunque el SOMF sea negativo, ya que es el estudio más preciso". (Tono sugerencia, sin urgencia).
+     * **Mayores de 60 años (que nunca se hicieron VCC):** ALERTA ROJA/AMARILLA. Indicar: "Más allá del SOMF negativo, por tu edad es fundamental realizar una Colonoscopía si nunca la hiciste".
+     * **Menores de 50:** Resultado normal, sin acciones extra.
 4. **Próstata:** PSA hombres ≥ 50 años.
-5. **Salud Mujer (HPV/PAP):**
-   - < 26 años: NO pedir estudios. Recomendar VACUNA HPV si no la tiene.
-   - 26-29 años: PAP solo si hay indicación.
-   - ≥ 30 años: Test HPV obligatorio. Si es negativo (-), explicar que no necesita repetir por 3 años (riesgo nulo).
+5. **Salud Mujer (HPV / PAP) - LÓGICA CRUZADA OBLIGATORIA:**
+   - **Primero mira el HPV:**
+     * **Si HPV es NEGATIVO (Normal):** El PAP NO ES NECESARIO. La tarjeta debe ser verde. Mensaje: "Al tener HPV negativo, no necesitas PAP por 3-5 años según criterio médico". ¡No marques el PAP como falta!
+     * **Si HPV es POSITIVO (Patológico):**
+        - Si tiene PAP Normal: "Excelente, situación controlada".
+        - Si NO tiene PAP o está pendiente: **ALERTA ROJA**. Mensaje: "El HPV positivo es riesgo. Consulta urgente para realizar el PAP".
+   - **Reglas por edad (solo si no hay dato de HPV):**
+     * < 26 años: Recomendar vacuna, no estudios.
+     * > 30 años: El test de HPV es la prioridad.
 6. **Alertas:** Fumar, Alcohol, Seguridad Vial (No cumple), Violencia, Depresión.
 
 ESTRUCTURA VISUAL OBLIGATORIA (HTML TAILWIND):

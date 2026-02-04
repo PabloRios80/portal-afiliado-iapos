@@ -278,7 +278,8 @@ async function obtenerLinkEstudios(dni, studyType) {
 // ==============================================================================
 // 🔴 LÓGICA DE RIESGO (CORREGIDA: PRIORIDAD A RESULTADOS NEGATIVOS/VERDES)
 // ==============================================================================
-function getRiskLevel(key, value, edad, sexo) {
+// CORRECTO (Agregamos allData)
+function getRiskLevel(key, value, edad, sexo, allData = {}) {
     const v = String(value || '').toLowerCase().trim();
     const k = key.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
     
@@ -289,6 +290,72 @@ function getRiskLevel(key, value, edad, sexo) {
     // --- DATOS PERSONALES (VIOLETA) ---
     if (k === 'EDAD' || k === 'SEXO') {
         return { color: 'violet', icon: 'info', text: 'Dato Personal', customMsg: 'Información registrada en el sistema.' };
+    }
+
+    // =====================================================================
+    // 🧠 LÓGICA CRUZADA: PAP / HPV (La "Inteligencia Médica" Nueva)
+    // =====================================================================
+    if (k.includes('PAP') || k.includes('PAPA')) {
+        // 1. Buscamos el valor de HPV en todos los datos del paciente
+        // Buscamos cualquier clave que tenga "HPV" o "VPH"
+        const keyHPV = Object.keys(allData).find(x => x.toUpperCase().includes('HPV') || x.toUpperCase().includes('VPH'));
+        const valorHPV = keyHPV ? String(allData[keyHPV]).toLowerCase() : '';
+        
+        // Definimos estados del HPV
+        const hpvEsNormal = valorHPV.includes('negativo') || valorHPV.includes('no se detecta') || valorHPV.includes('normal') || valorHPV.includes('no detectado');
+        const hpvEsPatologico = valorHPV.includes('positivo') || valorHPV.includes('detectado') || valorHPV.includes('se verifica') || valorHPV.includes('patologic') || valorHPV.includes('lesion');
+
+        // ESCENARIO A: HPV NORMAL (Verde) -> PAP No necesario
+        if (hpvEsNormal) {
+            return { 
+                color: 'green', 
+                icon: 'check', 
+                text: 'No Requerido', 
+                customMsg: 'Al tener HPV Normal (Negativo), no es necesario realizar PAP por 3 a 5 años (según criterio médico).' 
+            };
+        }
+
+        // ESCENARIO B: HPV PATOLÓGICO (Rojo) + PAP PENDIENTE/MALO
+        if (hpvEsPatologico) {
+            // Si el PAP dio bien, felicitamos
+            if (v.includes('normal') || v.includes('negativo') || v.includes('sin lesion')) {
+                return { 
+                    color: 'green', 
+                    icon: 'check', 
+                    text: 'Controlado', 
+                    customMsg: 'HPV positivo controlado. Felicitaciones, su PAP es normal.' 
+                };
+            }
+            // Si falta el PAP o dio mal -> ALERTA MÁXIMA
+            return { 
+                color: 'red', 
+                icon: 'exclamation', 
+                text: 'ACCIÓN REQUERIDA', 
+                customMsg: 'ALERTA: Test HPV de Alto Riesgo. Consulte URGENTE a su médico para realizar PAP y seguimiento.' 
+            };
+        }
+
+        // ESCENARIO C: SIN DATO DE HPV (Comportamiento estándar por edad)
+        // Si no tenemos dato de HPV, volvemos a la lógica clásica
+        if (noRealizado) {
+            if (edad > 21) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Estudio de tamizaje pendiente.' };
+            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Aún no tiene edad de screening.' };
+        }
+    }
+    // =====================================================================
+
+    // --- HPV (Lógica propia del indicador) ---
+    if (k.includes('HPV') || k.includes('VPH')) {
+        if (v.includes('patologic') || v.includes('anormal') || v.includes('lesion') || v.includes('positivo') || v.includes('detectado')) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado positivo. Requiere seguimiento estricto (PAP).' };
+        }
+        if (v.includes('negativo') || v.includes('no detectado') || v.includes('normal')) {
+            return { color: 'green', icon: 'check', text: 'Excelente', customMsg: 'Virus no detectado. Control habitual.' };
+        }
+        if (noRealizado) {
+            if (edad > 30) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Test de VPH indicado mayores de 30 años.' };
+            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Se indica a partir de los 30 años.' };
+        }
     }
 
     // ==========================================
@@ -451,14 +518,54 @@ function getRiskLevel(key, value, edad, sexo) {
         }
     }
 
-    // --- CÁNCER DE COLON ---
+    // --- CÁNCER DE COLON (Lógica Cruzada SOMF / VCC / EDAD) ---
     if (k.includes('SOMF') || k.includes('SANGRE OCULTA') || k.includes('COLON')) {
-        if (v.includes('patologic') || v.includes('positivo') || v.includes('anormal') || v.includes('polipo')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado patológico. Requiere seguimiento.' };
+        
+        // Buscamos si tiene VCC hecha en algún otro campo
+        const keyVCC = Object.keys(allData).find(x => x.toUpperCase().includes('VCC') || x.toUpperCase().includes('COLONOSCOPIA') || x.toUpperCase().includes('VIDEOCOLON'));
+        const valorVCC = keyVCC ? String(allData[keyVCC]).toLowerCase() : '';
+        // Consideramos "Hecha" si dice si, normal, patologica, realizada, etc.
+        const vccHecha = valorVCC.includes('si') || valorVCC.includes('realizad') || valorVCC.includes('normal') || valorVCC.includes('patologic') || valorVCC.includes('polipo');
+
+        // 1. SOMF POSITIVO (SIEMPRE ES ALERTA ROJA)
+        if (v.includes('positivo') || v.includes('detectada') || v.includes('anormal') || v.includes('sangre')) {
+            return { 
+                color: 'red', 
+                icon: 'exclamation', 
+                text: 'ALERTA', 
+                customMsg: 'SOMF Positivo. Indica riesgo. La Video Colonoscopía (VCC) es OBLIGATORIA para descartar lesiones.' 
+            };
         }
+
+        // 2. SOMF NEGATIVO (Aquí aplicamos tu nueva lógica de edad)
+        if (v.includes('negativo') || v.includes('no se detecta') || v.includes('normal')) {
+            // Regla: > 60 años sin VCC nunca = ROJO (Aunque SOMF de bien)
+            if (edad > 60 && !vccHecha) {
+                return { 
+                    color: 'red', 
+                    icon: 'exclamation', 
+                    text: 'Atención', 
+                    customMsg: 'SOMF Negativo. PERO al ser mayor de 60 años, se indica realizar VCC si nunca la hizo.' 
+                };
+            }
+            // Regla: > 50 años = VERDE pero con SUGERENCIA
+            if (edad > 50) {
+                return { 
+                    color: 'green', 
+                    icon: 'info', 
+                    text: 'Bien', 
+                    customMsg: 'SOMF Negativo. Aún así, es conveniente considerar una Colonoscopía cada 5 años para mayor seguridad.' 
+                };
+            }
+            // Menores de 50
+            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Valor normal.' };
+        }
+
+        // 3. NO REALIZADO
         if (noRealizado) {
-            if (edad >= 50) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 50 años.' };
-            return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 50 años.' };
+            if (edad > 60 && !vccHecha) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Mayor de 60 años: La VCC es prioridad.' };
+            if (edad >= 50) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el rastreo es obligatorio.' };
+            return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Rastreo indicado a partir de los 50 años.' };
         }
     }
 
@@ -526,6 +633,9 @@ function getRiskLevel(key, value, edad, sexo) {
     if (v.includes('mejorar') || v.includes('moderar') || v.includes('a vigilar') || v.includes('límite') || v.includes('riesgo moderado')) {
         return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
     }
+
+    if (v === 'si' || v.includes('normal')) return { color: 'green', icon: 'check', text: 'Bien' };
+    if (v === 'no' || v.includes('anormal')) return { color: 'red', icon: 'times', text: 'Alerta' };
 
     return { color: 'gray', icon: 'question', text: 'Sin Dato' };
 }
@@ -698,7 +808,7 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
         if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
 
         // USA TU LÓGICA DE RIESGO
-        const risk = getRiskLevel(key, safeValue, edadPaciente, sexo);
+        const risk = getRiskLevel(key, safeValue, edadPaciente, sexo, persona);
         const colorMap = {
             red: 'bg-red-100 border-red-500 text-red-700',
             yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700',
