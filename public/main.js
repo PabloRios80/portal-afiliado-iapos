@@ -470,11 +470,16 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
             return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Función renal alterada. Consulte a su médico.' };
         }
     }
-
-    // --- AGUDEZA VISUAL ---
+// --- AGUDEZA VISUAL (CAMBIO: Ahora es Amarillo/Precaución) ---
     if (k.includes('AGUDEZA') || k.includes('VISUAL')) {
         if (v.includes('alterada') || v.includes('disminuida') || v.includes('anormal')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Visión alterada. Se requiere consulta oftalmológica.' };
+            // ANTES: Era rojo. AHORA: Amarillo.
+            return { 
+                color: 'yellow', 
+                icon: 'eye', // Icono de ojo si lo tienes, sino 'exclamation'
+                text: 'Atención', 
+                customMsg: 'Visión con alteraciones leves. Se sugiere control oftalmológico periódico para seguimiento.' 
+            };
         }
     }
 
@@ -518,46 +523,43 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         }
     }
 
-    // --- CÁNCER DE COLON (Lógica Cruzada SOMF / VCC / EDAD) ---
+// --- CÁNCER DE COLON (CAMBIO: >60 con SOMF Negativo es Amarillo) ---
     if (k.includes('SOMF') || k.includes('SANGRE OCULTA') || k.includes('COLON')) {
         
-        // Buscamos si tiene VCC hecha en algún otro campo
-        const keyVCC = Object.keys(allData).find(x => x.toUpperCase().includes('VCC') || x.toUpperCase().includes('COLONOSCOPIA') || x.toUpperCase().includes('VIDEOCOLON'));
+        const keyVCC = Object.keys(allData).find(x => x.toUpperCase().includes('VCC') || x.toUpperCase().includes('COLONOSCOPIA'));
         const valorVCC = keyVCC ? String(allData[keyVCC]).toLowerCase() : '';
-        // Consideramos "Hecha" si dice si, normal, patologica, realizada, etc.
         const vccHecha = valorVCC.includes('si') || valorVCC.includes('realizad') || valorVCC.includes('normal') || valorVCC.includes('patologic') || valorVCC.includes('polipo');
 
-        // 1. SOMF POSITIVO (SIEMPRE ES ALERTA ROJA)
+        // 1. SOMF POSITIVO (Sigue siendo ROJO)
         if (v.includes('positivo') || v.includes('detectada') || v.includes('anormal') || v.includes('sangre')) {
             return { 
                 color: 'red', 
                 icon: 'exclamation', 
                 text: 'ALERTA', 
-                customMsg: 'SOMF Positivo. Indica riesgo. La Video Colonoscopía (VCC) es OBLIGATORIA para descartar lesiones.' 
+                customMsg: 'SOMF Positivo. La Video Colonoscopía (VCC) es necesaria para descartar lesiones.' 
             };
         }
 
-        // 2. SOMF NEGATIVO (Aquí aplicamos tu nueva lógica de edad)
+        // 2. SOMF NEGATIVO
         if (v.includes('negativo') || v.includes('no se detecta') || v.includes('normal')) {
-            // Regla: > 60 años sin VCC nunca = ROJO (Aunque SOMF de bien)
+            // CAMBIO AQUÍ: > 60 años sin VCC pasa a AMARILLO
             if (edad > 60 && !vccHecha) {
                 return { 
-                    color: 'red', 
-                    icon: 'exclamation', 
-                    text: 'Atención', 
-                    customMsg: 'SOMF Negativo. PERO al ser mayor de 60 años, se indica realizar VCC si nunca la hizo.' 
+                    color: 'yellow', // Antes 'red'
+                    icon: 'info', 
+                    text: 'Sugerencia', 
+                    customMsg: 'SOMF Normal. Sin embargo, por ser mayor de 60 años, es muy recomendable programar una Colonoscopía si nunca la realizó.' 
                 };
             }
-            // Regla: > 50 años = VERDE pero con SUGERENCIA
+            // > 50 años (Amarillo/Verde sugerencia)
             if (edad > 50) {
                 return { 
-                    color: 'green', 
+                    color: 'yellow', // Un amarillo suave o verde con info
                     icon: 'info', 
                     text: 'Bien', 
-                    customMsg: 'SOMF Negativo. Aún así, es conveniente considerar una Colonoscopía cada 5 años para mayor seguridad.' 
+                    customMsg: 'Resultado Normal. Recuerde que la Colonoscopía cada 5 años es el método preventivo ideal.' 
                 };
             }
-            // Menores de 50
             return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Valor normal.' };
         }
 

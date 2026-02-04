@@ -244,9 +244,9 @@ REGLAS MÉDICAS (SÍGUELAS ESTRICTAMENTE):
 3. **Cáncer de Colon (SOMF/VCC):**
    - **Regla de Oro:** El rastreo comienza a los 50 años.
    - **Si SOMF es POSITIVO (+):** ALERTA ROJA. Indicar VCC obligatoria y explicar importancia de detectar pólipos a tiempo.
-   - **Si SOMF es NEGATIVO (-):**
-     * **Entre 50 y 60 años:** Felicitar por el negativo, PERO aclarar: "Es conveniente considerar una Colonoscopía (VCC) cada 5 años aunque el SOMF sea negativo, ya que es el estudio más preciso". (Tono sugerencia, sin urgencia).
-     * **Mayores de 60 años (que nunca se hicieron VCC):** ALERTA ROJA/AMARILLA. Indicar: "Más allá del SOMF negativo, por tu edad es fundamental realizar una Colonoscopía si nunca la hiciste".
+   -- **SOMF (-):**
+     * **Mayores de 60 años (sin VCC):** ALERTA AMARILLA (PRECAUCIÓN). No lo retes, pero explícale con firmeza: "Tu SOMF dio bien, pero a tu edad la Colonoscopía es el estudio que te da seguridad total. Piénsalo".
+     * **Entre 50-60 años:** SUGERENCIA. "Considera la VCC para mayor tranquilidad".
      * **Menores de 50:** Resultado normal, sin acciones extra.
 4. **Próstata:** PSA hombres ≥ 50 años.
 5. **Salud Mujer (HPV / PAP) - LÓGICA CRUZADA OBLIGATORIA:**
@@ -259,6 +259,8 @@ REGLAS MÉDICAS (SÍGUELAS ESTRICTAMENTE):
      * < 26 años: Recomendar vacuna, no estudios.
      * > 30 años: El test de HPV es la prioridad.
 6. **Alertas:** Fumar, Alcohol, Seguridad Vial (No cumple), Violencia, Depresión.
+7. **Agudeza Visual:**
+    - Si dice "Alterada" o "Disminuida": ALERTA AMARILLA. No es una emergencia. Recomendar: "Controlar periódicamente la salud visual con tu oftalmólogo".
 
 ESTRUCTURA VISUAL OBLIGATORIA (HTML TAILWIND):
 1.  **CUADRO RESUMEN (AL PRINCIPIO):**
