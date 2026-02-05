@@ -878,51 +878,141 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     accionesContenedor.innerHTML = accionesHTML;
 }
 
+// ==============================================================================
+// 5. FUNCIONES IA: VISUALIZACIÓN LIMPIA + EDITOR TIPO WORD
+// ==============================================================================
+
 function configurarSeccionIA(persona, resumenAI) {
     const containerAI = document.getElementById('ai-summary-dynamic');
     
-    // Verificamos si hay un informe válido
-    const tieneInformeGuardado = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
+    // Verificamos si hay texto válido
+    const hayInforme = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
 
-    // --- CORRECCIÓN CRÍTICA: ACTUALIZAR MEMORIA DE IMPRESIÓN SIEMPRE ---
-    if (tieneInformeGuardado) {
+    // SIEMPRE actualizamos la memoria de impresión con lo que llega
+    if (hayInforme) {
         window.datosImpresionActual = {
             nombre: persona['apellido y nombre'] || 'Afiliado',
-            texto: resumenAI // Guardamos el HTML tal cual
+            texto: resumenAI
         };
     }
-    // ------------------------------------------------------------------
 
-    if (tieneInformeGuardado) {
-        // --- CASO A: YA EXISTE UN INFORME ---
-        // Inyectamos el HTML directo
-        containerAI.innerHTML = resumenAI;
+    if (hayInforme) {
+        // 1. LIMPIEZA TOTAL: Borramos cualquier botón viejo o HTML anterior
+        containerAI.innerHTML = ""; 
+
+        // 2. CREAMOS EL CONTENEDOR DEL INFORME (Para poder editar solo esto)
+        const divInforme = document.createElement('div');
+        divInforme.id = "contenido-informe-visual";
+        divInforme.innerHTML = resumenAI; // Aquí va el HTML lindo de la IA
+        containerAI.appendChild(divInforme);
         
-        // Si es admin, mostramos opción de editar
+        // 3. SI SOY ADMIN, AGREGO LA BARRA TIPO WORD (Y NADA MÁS)
         if (currentUser && currentUser.rol === 'admin') {
-            const btnEditar = document.createElement('div');
-            btnEditar.className = "mt-2 text-right border-t pt-2";
-            btnEditar.innerHTML = `
-                <span class="text-xs text-green-600 font-bold mr-2"><i class="fas fa-check-circle"></i> Validado</span>
-                <button id="btn-editar-existente" class="text-xs text-blue-600 underline cursor-pointer">Editar Texto</button>
-            `;
-            containerAI.appendChild(btnEditar);
+            const barraHerramientas = document.createElement('div');
+            barraHerramientas.id = "barra-herramientas-ia";
+            barraHerramientas.className = "mt-4 flex justify-between items-center border-t pt-3 bg-blue-50 p-2 rounded border border-blue-100";
             
-            document.getElementById('btn-editar-existente').onclick = () => {
-                iniciarEditorIA(persona, containerAI, resumenAI);
+            barraHerramientas.innerHTML = `
+                <div class="text-xs text-blue-800 font-semibold">
+                    <i class="fas fa-robot"></i> Asistente IA
+                </div>
+                <div>
+                    <button id="btn-editar-visual" class="bg-white text-blue-700 border border-blue-300 px-4 py-1 rounded text-sm hover:bg-blue-50 transition shadow-sm font-medium">
+                        <i class="fas fa-pen"></i> Editar Texto
+                    </button>
+                    
+                    <button id="btn-guardar-visual" class="hidden bg-green-600 text-white px-4 py-1 rounded text-sm hover:bg-green-700 transition shadow ml-2">
+                        <i class="fas fa-save"></i> Guardar
+                    </button>
+                    <button id="btn-cancelar-visual" class="hidden bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 transition ml-2">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `;
+            containerAI.appendChild(barraHerramientas);
+
+            // --- LÓGICA DE LOS BOTONES ---
+            const btnEditar = document.getElementById('btn-editar-visual');
+            const btnGuardar = document.getElementById('btn-guardar-visual');
+            const btnCancelar = document.getElementById('btn-cancelar-visual');
+
+            // CLIC EN EDITAR -> Activa modo Word sobre 'divInforme'
+            btnEditar.onclick = () => {
+                alternarEdicionVisual(true, divInforme);
+            };
+
+            // CLIC EN GUARDAR -> Guarda cambios y actualiza impresión
+            btnGuardar.onclick = () => {
+                const textoEditado = divInforme.innerHTML;
+                
+                // Actualizamos la memoria para imprimir
+                window.datosImpresionActual.texto = textoEditado;
+                
+                // Efecto visual de éxito
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: 'Informe guardado',
+                    showConfirmButton: false,
+                    timer: 1000
+                });
+                
+                // Salimos del modo edición
+                alternarEdicionVisual(false, divInforme);
+            };
+
+            // CLIC EN CANCELAR -> Deshace cambios
+            btnCancelar.onclick = () => {
+                divInforme.innerHTML = resumenAI; // Vuelve al original
+                window.datosImpresionActual.texto = resumenAI;
+                alternarEdicionVisual(false, divInforme);
             };
         }
 
     } else if (currentUser && currentUser.rol === 'admin') {
-        // --- CASO B: SOY ADMIN Y NO HAY INFORME ---
+        // --- NO HAY INFORME: MOSTRAR BOTÓN GENERAR ---
         mostrarPanelGenerador(persona, containerAI);
     } else {
-        // --- CASO C: PACIENTE ---
+        // --- PACIENTE ---
         containerAI.innerHTML = `
             <div class="bg-gray-100 p-6 rounded-lg text-center border border-gray-200">
                 <i class="fas fa-user-md text-4xl text-gray-400 mb-3"></i>
                 <p class="text-gray-600 text-lg">Informe en proceso.</p>
             </div>`;
+    }
+}
+
+// ---------------------------------------------------------
+// FUNCIÓN AUXILIAR (Actualizada para manejar botones nuevos)
+// ---------------------------------------------------------
+function alternarEdicionVisual(activar, elementoTexto) {
+    const btnEditar = document.getElementById('btn-editar-visual');
+    const btnGuardar = document.getElementById('btn-guardar-visual');
+    const btnCancelar = document.getElementById('btn-cancelar-visual');
+    
+    if (activar) {
+        // ACTIVAR MODO WORD
+        elementoTexto.contentEditable = "true";
+        elementoTexto.style.outline = "2px dashed #3b82f6"; // Borde azul
+        elementoTexto.style.padding = "10px";
+        elementoTexto.style.backgroundColor = "#fff";
+        elementoTexto.focus();
+
+        if(btnEditar) btnEditar.classList.add('hidden');
+        if(btnGuardar) btnGuardar.classList.remove('hidden');
+        if(btnCancelar) btnCancelar.classList.remove('hidden');
+
+    } else {
+        // DESACTIVAR MODO WORD
+        elementoTexto.contentEditable = "false";
+        elementoTexto.style.outline = "none";
+        elementoTexto.style.padding = "0";
+        elementoTexto.style.backgroundColor = "transparent";
+
+        if(btnEditar) btnEditar.classList.remove('hidden');
+        if(btnGuardar) btnGuardar.classList.add('hidden');
+        if(btnCancelar) btnGuardar.classList.add('hidden');
     }
 }
 
