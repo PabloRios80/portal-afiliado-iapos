@@ -791,6 +791,24 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
 
     // 3. BUCLE DE INDICADORES
     for (const [key, value] of Object.entries(persona)) {
+        // 1. Limpiamos el valor (quitamos espacios extra)
+        const vLimpio = String(value || '').trim();
+
+        // =====================================================================
+        // 🗑️ FILTRO ANTI-BASURA (NUEVO)
+        // =====================================================================
+        
+        // Regla 1: Si está vacío, es nulo o undefined -> SALTAMOS
+        if (!vLimpio) continue;
+
+        // Regla 2: Si es un solo caracter y NO es un número (ej: "-", ".", "x", "A") -> SALTAMOS
+        // (Esto permite mostrar "0", "1", "5", pero oculta errores de tipeo de una letra)
+        if (vLimpio.length === 1 && isNaN(vLimpio)) continue;
+
+        // Regla 3: Lista negra de símbolos o textos inútiles específicos
+        const basura = ['-', '--', '.', '..', '/', 'n/a', 's/d', 'sd', 'sin dato', 'no aplica'];
+        if (basura.includes(vLimpio.toLowerCase())) continue;
+
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'REPORTE_MEDICO'].includes(key)) {
             continue;
         }
