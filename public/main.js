@@ -877,145 +877,142 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
     `;
     accionesContenedor.innerHTML = accionesHTML;
 }
-
 // ==============================================================================
-// 5. FUNCIONES IA: VISUALIZACIÓN LIMPIA + EDITOR TIPO WORD
+// 5. FUNCIONES IA: BARRA DE HERRAMIENTAS COMPLETA (EDITAR + GUARDAR)
 // ==============================================================================
 
 function configurarSeccionIA(persona, resumenAI) {
     const containerAI = document.getElementById('ai-summary-dynamic');
     
-    // Verificamos si hay texto válido
     const hayInforme = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
 
-    // SIEMPRE actualizamos la memoria de impresión con lo que llega
     if (hayInforme) {
+        // Actualizamos memoria inicial
         window.datosImpresionActual = {
             nombre: persona['apellido y nombre'] || 'Afiliado',
             texto: resumenAI
         };
-    }
 
-    if (hayInforme) {
-        // 1. LIMPIEZA TOTAL: Borramos cualquier botón viejo o HTML anterior
-        containerAI.innerHTML = ""; 
+        containerAI.innerHTML = ""; // Limpiamos
 
-        // 2. CREAMOS EL CONTENEDOR DEL INFORME (Para poder editar solo esto)
+        // --- 1. PESTAÑA VISTA PREVIA ---
+        const tabContainer = document.createElement('div');
+        tabContainer.className = "flex border-b border-gray-300 mb-4";
+        const tabVista = document.createElement('button');
+        tabVista.className = "py-2 px-6 text-blue-600 border-b-2 border-blue-600 font-bold focus:outline-none bg-white hover:bg-gray-50 rounded-t-md transition";
+        tabVista.innerHTML = '<i class="fas fa-eye mr-2"></i>Vista Previa';
+        tabContainer.appendChild(tabVista);
+        containerAI.appendChild(tabContainer);
+
+        // --- 2. CONTENEDOR DEL INFORME ---
         const divInforme = document.createElement('div');
         divInforme.id = "contenido-informe-visual";
-        divInforme.innerHTML = resumenAI; // Aquí va el HTML lindo de la IA
+        divInforme.className = "bg-white p-2 min-h-[200px]";
+        divInforme.innerHTML = resumenAI; 
         containerAI.appendChild(divInforme);
         
-        // 3. SI SOY ADMIN, AGREGO LA BARRA TIPO WORD (Y NADA MÁS)
+        // --- 3. BARRA DE HERRAMIENTAS (BOTONES JUNTOS) ---
         if (currentUser && currentUser.rol === 'admin') {
             const barraHerramientas = document.createElement('div');
-            barraHerramientas.id = "barra-herramientas-ia";
-            barraHerramientas.className = "mt-4 flex justify-between items-center border-t pt-3 bg-blue-50 p-2 rounded border border-blue-100";
+            barraHerramientas.className = "mt-6 flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200";
             
+            // Aquí quitamos el 'hidden' del botón Guardar para que se vea siempre
             barraHerramientas.innerHTML = `
-                <div class="text-xs text-blue-800 font-semibold">
-                    <i class="fas fa-robot"></i> Asistente IA
+                <div class="text-xs text-gray-500 font-medium">
+                    <i class="fas fa-magic text-purple-500"></i> Opciones IA
                 </div>
                 <div>
-                    <button id="btn-editar-visual" class="bg-white text-blue-700 border border-blue-300 px-4 py-1 rounded text-sm hover:bg-blue-50 transition shadow-sm font-medium">
-                        <i class="fas fa-pen"></i> Editar Texto
+                    <button id="btn-editar-visual" class="bg-white text-blue-700 border border-blue-300 px-4 py-2 rounded shadow-sm hover:bg-blue-50 transition font-medium text-sm mr-2">
+                        <i class="fas fa-pen mr-2"></i>Editar Texto
                     </button>
                     
-                    <button id="btn-guardar-visual" class="hidden bg-green-600 text-white px-4 py-1 rounded text-sm hover:bg-green-700 transition shadow ml-2">
-                        <i class="fas fa-save"></i> Guardar
+                    <button id="btn-guardar-visual" class="bg-green-600 text-white px-6 py-2 rounded shadow hover:bg-green-700 transition font-bold text-sm">
+                        <i class="fas fa-check mr-2"></i>Guardar / Confirmar
                     </button>
-                    <button id="btn-cancelar-visual" class="hidden bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 transition ml-2">
+
+                    <button id="btn-cancelar-visual" class="hidden bg-gray-400 text-white px-3 py-2 rounded shadow hover:bg-gray-500 transition font-medium text-sm ml-2">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
             `;
             containerAI.appendChild(barraHerramientas);
 
-            // --- LÓGICA DE LOS BOTONES ---
+            // --- LÓGICA DE BOTONES ---
             const btnEditar = document.getElementById('btn-editar-visual');
             const btnGuardar = document.getElementById('btn-guardar-visual');
             const btnCancelar = document.getElementById('btn-cancelar-visual');
 
-            // CLIC EN EDITAR -> Activa modo Word sobre 'divInforme'
-            btnEditar.onclick = () => {
-                alternarEdicionVisual(true, divInforme);
-            };
+            // 1. EDITAR: Activa el modo Word
+            btnEditar.onclick = () => alternarEdicionVisual(true, divInforme);
 
-            // CLIC EN GUARDAR -> Guarda cambios y actualiza impresión
+            // 2. GUARDAR: Sirve para confirmar el original O guardar cambios
             btnGuardar.onclick = () => {
-                const textoEditado = divInforme.innerHTML;
+                const textoFinal = divInforme.innerHTML;
                 
-                // Actualizamos la memoria para imprimir
-                window.datosImpresionActual.texto = textoEditado;
-                
-                // Efecto visual de éxito
+                // Actualizamos la memoria de impresión y el reporte seleccionado
+                window.datosImpresionActual.texto = textoFinal;
+                if (window.reporteSeleccionado) {
+                    window.reporteSeleccionado.informe = textoFinal;
+                }
+
                 Swal.fire({
                     toast: true,
                     position: 'top-end',
                     icon: 'success',
-                    title: 'Informe guardado',
+                    title: 'Informe Guardado Correctamente',
                     showConfirmButton: false,
-                    timer: 1000
+                    timer: 1500
                 });
                 
-                // Salimos del modo edición
+                // Si estaba editando, salimos del modo edición
                 alternarEdicionVisual(false, divInforme);
             };
 
-            // CLIC EN CANCELAR -> Deshace cambios
+            // 3. CANCELAR: Deshace cambios
             btnCancelar.onclick = () => {
-                divInforme.innerHTML = resumenAI; // Vuelve al original
+                divInforme.innerHTML = resumenAI; // Restauramos original
                 window.datosImpresionActual.texto = resumenAI;
                 alternarEdicionVisual(false, divInforme);
             };
         }
 
     } else if (currentUser && currentUser.rol === 'admin') {
-        // --- NO HAY INFORME: MOSTRAR BOTÓN GENERAR ---
         mostrarPanelGenerador(persona, containerAI);
     } else {
-        // --- PACIENTE ---
-        containerAI.innerHTML = `
-            <div class="bg-gray-100 p-6 rounded-lg text-center border border-gray-200">
-                <i class="fas fa-user-md text-4xl text-gray-400 mb-3"></i>
-                <p class="text-gray-600 text-lg">Informe en proceso.</p>
-            </div>`;
+        containerAI.innerHTML = `<div class="bg-gray-100 p-6 text-center">Informe en proceso.</div>`;
     }
 }
 
-// ---------------------------------------------------------
-// FUNCIÓN AUXILIAR (Actualizada para manejar botones nuevos)
-// ---------------------------------------------------------
+// FUNCION AUXILIAR ACTUALIZADA (Maneja la visibilidad de los botones)
 function alternarEdicionVisual(activar, elementoTexto) {
     const btnEditar = document.getElementById('btn-editar-visual');
     const btnGuardar = document.getElementById('btn-guardar-visual');
     const btnCancelar = document.getElementById('btn-cancelar-visual');
     
     if (activar) {
-        // ACTIVAR MODO WORD
+        // MODO EDICIÓN
         elementoTexto.contentEditable = "true";
-        elementoTexto.style.outline = "2px dashed #3b82f6"; // Borde azul
-        elementoTexto.style.padding = "10px";
-        elementoTexto.style.backgroundColor = "#fff";
+        elementoTexto.style.outline = "2px dashed #3b82f6";
+        elementoTexto.style.backgroundColor = "#ffffff";
         elementoTexto.focus();
 
+        // Ocultamos "Editar", mostramos "Cancelar". "Guardar" se queda.
         if(btnEditar) btnEditar.classList.add('hidden');
-        if(btnGuardar) btnGuardar.classList.remove('hidden');
         if(btnCancelar) btnCancelar.classList.remove('hidden');
+        if(btnGuardar) btnGuardar.innerHTML = '<i class="fas fa-save mr-2"></i>Guardar Cambios';
 
     } else {
-        // DESACTIVAR MODO WORD
+        // MODO LECTURA
         elementoTexto.contentEditable = "false";
         elementoTexto.style.outline = "none";
-        elementoTexto.style.padding = "0";
         elementoTexto.style.backgroundColor = "transparent";
 
+        // Restauramos botones originales
         if(btnEditar) btnEditar.classList.remove('hidden');
-        if(btnGuardar) btnGuardar.classList.add('hidden');
-        if(btnCancelar) btnGuardar.classList.add('hidden');
+        if(btnCancelar) btnCancelar.classList.add('hidden');
+        if(btnGuardar) btnGuardar.innerHTML = '<i class="fas fa-check mr-2"></i>Guardar / Confirmar';
     }
 }
-
 function mostrarPanelGenerador(persona, container) {
     container.innerHTML = `
         <div class="bg-yellow-50 p-6 rounded-lg border border-yellow-200 text-center">
@@ -1044,7 +1041,8 @@ function mostrarPanelGenerador(persona, container) {
             if (!resp.ok) throw new Error(result.error || 'Error IA');
 
             // Una vez tenemos el texto, iniciamos el editor
-            iniciarEditorIA(persona, container, result.resumen);
+            //iniciarEditorIA(persona, container, result.resumen);
+            configurarSeccionIA(persona, result.resumen);
 
         } catch (e) {
             console.error(e);
