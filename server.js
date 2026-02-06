@@ -408,6 +408,78 @@ app.post('/api/auth/cambiar-password', async (req, res) => {
         res.status(500).json({ error: 'Error al actualizar: ' + e.message }); 
     }
 });
+// ======================================================================
+// 📝 GUARDAR INFORME (USANDO OAUTH2 EXISTENTE - SIN CAMBIAR .ENV)
+// ======================================================================
+app.post('/api/actualizar-informe-ia', async (req, res) => {
+    try {
+        const { dni, nuevoInforme, nombre } = req.body;
+
+        if (!dni) return res.status(400).json({ error: 'Falta el DNI' });
+
+        console.log(`💾 Guardando en 'Informes IA' para DNI: ${dni} usando OAuth2...`);
+
+        // 1. Usamos el cliente que YA funciona en tu app
+        const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+        // 2. Primero leemos la columna A de la pestaña "Informes IA" para buscar el DNI
+        // Asumimos: Columna A = DNI, Columna B = Nombre, Columna C = Reporte HTML
+        const respuesta = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: "'Informes IA'!A:A", // Leemos solo la columna de DNIs
+        });
+
+        const filas = respuesta.data.values || [];
+        
+        // Buscamos en qué fila está el DNI (sumamos 1 porque el array empieza en 0 pero Excel en 1)
+        let indiceFila = -1;
+        for (let i = 0; i < filas.length; i++) {
+            // Comparamos como texto para evitar errores
+            if (filas[i][0] && filas[i][0].toString().trim() === String(dni).trim()) {
+                indiceFila = i + 1; // Encontrado
+                break;
+            }
+        }
+
+        if (indiceFila !== -1) {
+            // --- CASO A: ACTUALIZAR (El paciente existe) ---
+            // Vamos a escribir en la Columna C (que es la del reporte) de esa fila
+            console.log(`✅ Paciente encontrado en fila ${indiceFila}. Actualizando...`);
+            
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `'Informes IA'!C${indiceFila}`, // Columna C = Reporte
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[nuevoInforme]] // El dato a guardar
+                }
+            });
+
+        } else {
+            // --- CASO B: CREAR NUEVO (El paciente no estaba en esta hoja) ---
+            console.log("⚠️ Paciente nuevo en Informes IA. Creando fila...");
+            
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: SPREADSHEET_ID,
+                range: "'Informes IA'!A:C",
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[dni, nombre || 'Paciente', nuevoInforme]]
+                }
+            });
+        }
+
+        res.json({ ok: true, mensaje: "Guardado correctamente" });
+
+    } catch (error) {
+        console.error('🚨 Error guardando con OAuth:', error);
+        // Si el error es de tokens, intentamos avisar
+        if (error.code === 401 || error.code === 403) {
+            return res.status(401).json({ error: 'Error de permisos. El token del servidor puede estar vencido.' });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // START
 app.use(express.static(path.join(__dirname, 'public')));

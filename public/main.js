@@ -766,23 +766,21 @@ function cargarDiaPreventivoTab(persona, resumenAI) {
             </div>
         `;
     }
-
-    // 2. CONSTRUCCIÓN DEL HTML BASE
+// 2. CONSTRUCCIÓN DEL HTML BASE
     let dashboardHTML = `
-        <h1 class="text-2xl font-bold mb-6 text-gray-800">
-            <i class="fas fa-heartbeat mr-2 text-blue-600"></i> Mis resultados del Día Preventivo
-        </h1>
-        ${dateSelectorHTML}
+        ${dateSelectorHTML} 
+        
         <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-lg shadow-sm">
             <p class="font-semibold text-blue-700">
                 <i class="fas fa-calendar-alt mr-2"></i> Fecha del Informe Activo: 
                 <span class="font-bold text-blue-900">${fechaInforme}</span>
-                ${edadPaciente > 0 ? `<span class="ml-4 text-sm text-gray-600">(Edad registrada: ${edadPaciente} años)</span>` : ''}
+                
+                ${edadPaciente > 0 ? `<span class="ml-4 text-sm text-gray-600 italic">(Edad registrada al momento del examen: ${edadPaciente} años)</span>` : ''}
             </p>
         </div>
 
         <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
-            <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Tu Resumen de Salud (Generado por IA)</h2>
+            <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Tu Resumen de Salud</h2>
             <div id="ai-summary-dynamic" class="mb-6 rounded-lg"></div>
 
             <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Detalle de Indicadores</h2>
@@ -962,30 +960,55 @@ function configurarSeccionIA(persona, resumenAI) {
 
             // 1. EDITAR: Activa el modo Word
             btnEditar.onclick = () => alternarEdicionVisual(true, divInforme);
+            // ... dentro de configurarSeccionIA ...
 
-            // 2. GUARDAR: Sirve para confirmar el original O guardar cambios
-            btnGuardar.onclick = () => {
+            btnGuardar.onclick = async () => {
                 const textoFinal = divInforme.innerHTML;
+                const btnTextoOriginal = btnGuardar.innerHTML;
                 
-                // Actualizamos la memoria de impresión y el reporte seleccionado
-                window.datosImpresionActual.texto = textoFinal;
-                if (window.reporteSeleccionado) {
-                    window.reporteSeleccionado.informe = textoFinal;
+                // Efecto visual de carga
+                btnGuardar.disabled = true;
+                btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
+
+                try {
+                    // 👇 AQUÍ ESTABA EL ERROR: Quitamos ${API_URL} y dejamos solo la barra /
+                    const response = await fetch('/api/actualizar-informe-ia', { 
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            dni: persona.DNI || persona.dni,
+                            nombre: persona['apellido y nombre'], 
+                            nuevoInforme: textoFinal 
+                        })
+                    });
+
+                    const resultado = await response.json();
+
+                    if (!response.ok) throw new Error(resultado.error || "Error al guardar");
+
+                    // ÉXITO
+                    window.datosImpresionActual.texto = textoFinal;
+                    
+                    Swal.fire({
+                        toast: true,
+                        position: 'top-end',
+                        icon: 'success',
+                        title: '¡Guardado en Informes IA!',
+                        showConfirmButton: false,
+                        timer: 2000
+                    });
+
+                    alternarEdicionVisual(false, divInforme);
+
+                } catch (error) {
+                    console.error("Error:", error);
+                    // Mensaje más claro para ti
+                    Swal.fire('Error', 'No se pudo guardar. ' + error.message, 'error');
+                } finally {
+                    btnGuardar.disabled = false;
+                    btnGuardar.innerHTML = btnTextoOriginal;
                 }
-
-                Swal.fire({
-                    toast: true,
-                    position: 'top-end',
-                    icon: 'success',
-                    title: 'Informe Guardado Correctamente',
-                    showConfirmButton: false,
-                    timer: 1500
-                });
-                
-                // Si estaba editando, salimos del modo edición
-                alternarEdicionVisual(false, divInforme);
             };
-
             // 3. CANCELAR: Deshace cambios
             btnCancelar.onclick = () => {
                 divInforme.innerHTML = resumenAI; // Restauramos original
@@ -1631,8 +1654,8 @@ async function cambiarClave() {
     const { isConfirmed } = await Swal.fire({
         title: '🔒 Cambio de Seguridad',
         html: `Vas a cambiar la contraseña del usuario:<br>
-               <b>DNI: ${usuarioLogueado.dni}</b><br>
-               <small>(Si no eres tú, cancela y cierra sesión)</small>`,
+                <b>DNI: ${usuarioLogueado.dni}</b><br>
+                <small>(Si no eres tú, cancela y cierra sesión)</small>`,
         icon: 'info',
         showCancelButton: true,
         confirmButtonText: 'Sí, continuar',
