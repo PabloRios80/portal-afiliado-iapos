@@ -481,6 +481,57 @@ app.post('/api/actualizar-informe-ia', async (req, res) => {
     }
 });
 
+// ======================================================================
+// ⚡ ALTA RÁPIDA DE USUARIO (SOLO ADMIN)
+// ======================================================================
+app.post('/api/admin/crear-usuario-rapido', async (req, res) => {
+    try {
+        const { dni } = req.body;
+        if (!dni) return res.status(400).json({ error: 'Falta el DNI' });
+
+        // 1. Generar contraseña aleatoria amigable
+        // Ej: IAPOS-4829
+        const randomNum = Math.floor(1000 + Math.random() * 9000);
+        const passwordPlana = `IAPOS-${randomNum}`;
+
+        // 2. Encriptar contraseña
+        const hashedPassword = await bcrypt.hash(passwordPlana, 10);
+
+        // 3. Guardar en Google Sheets (Hoja "Usuarios")
+        const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+        
+        // Verificamos si ya existe (opcional, pero recomendado)
+        const checkRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: "'Usuarios'!A:A",
+        });
+        const dnis = checkRes.data.values ? checkRes.data.values.flat() : [];
+        
+        if (dnis.includes(String(dni))) {
+            return res.status(400).json({ error: 'Este DNI ya tiene usuario creado.' });
+        }
+
+        // 4. Agregar fila nueva: DNI | PASSWORD | ROL | EMAIL(vacio)
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: "'Usuarios'!A:D",
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[dni, hashedPassword, 'user', '']]
+            }
+        });
+
+        console.log(`⚡ Usuario creado: ${dni} pass: ${passwordPlana}`);
+        
+        // Devolvemos la contraseña PLANA para que la puedas compartir por WhatsApp
+        res.json({ success: true, dni, password: passwordPlana });
+
+    } catch (error) {
+        console.error('Error creando usuario:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // START
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

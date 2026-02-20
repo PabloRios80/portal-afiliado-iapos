@@ -125,6 +125,11 @@ if (btnLogin) {
             } else {
                 Swal.fire('Acceso Denegado', data.error, 'error');
             }
+            if (currentUser.rol === 'admin') {
+                document.getElementById('panel-admin-seccion').classList.remove('hidden');
+            } else {
+                document.getElementById('panel-admin-seccion').classList.add('hidden');
+            }
         } catch (error) {
             console.error(error);
             Swal.fire('Error', 'No se pudo conectar al servidor.', 'error');
@@ -1736,4 +1741,62 @@ if (btnCerrarBusqueda) {
     btnCerrarBusqueda.addEventListener('click', () => {
         document.getElementById('search-container').style.display = 'none';
     });
+}
+
+// ==============================================================================
+// ⚡ FUNCIÓN DE ALTA RÁPIDA (ADMIN)
+// ==============================================================================
+async function crearUsuarioRapido() {
+    const dniInput = document.getElementById('admin-dni-input');
+    const dni = dniInput.value.trim();
+
+    if (!dni || dni.length < 6) return Swal.fire('Error', 'Ingresa un DNI válido', 'warning');
+
+    // Efecto de carga
+    const btn = event.currentTarget; // El botón que se clickeó
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+
+    try {
+        const response = await fetch('/api/admin/crear-usuario-rapido', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dni })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            // 1. Mostrar resultado en pantalla
+            document.getElementById('admin-resultado').classList.remove('hidden');
+            document.getElementById('admin-pass-display').innerText = data.password;
+
+            // 2. Preparar Link de WhatsApp
+            // Mensaje: "Hola! Tu usuario es [DNI] y tu clave: [PASS]. Entrá acá: [URL]"
+            const mensaje = `Hola! 👋 Desde el Programa Día Preventivo te enviamos tus credenciales de acceso.\n\n🆔 *Usuario (DNI):* ${data.dni}\n🔒 *Clave Provisoria:* ${data.password}\n\nIngresa ahora para ver tus estudios: https://portal-afiliado-iapos.onrender.com/`;
+            
+            const linkWhatsapp = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
+            
+            document.getElementById('btn-whatsapp-share').href = linkWhatsapp;
+
+            // 3. Feedback visual
+            Swal.fire({
+                toast: true, position: 'top-end', icon: 'success', 
+                title: 'Usuario Generado', showConfirmButton: false, timer: 1500
+            });
+            
+            dniInput.value = ''; // Limpiar campo
+
+        } else {
+            Swal.fire('Error', data.error || 'No se pudo crear', 'error');
+        }
+
+    } catch (error) {
+        console.error(error);
+        Swal.fire('Error', 'Fallo de conexión', 'error');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
 }
