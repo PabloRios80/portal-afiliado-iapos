@@ -296,7 +296,43 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     if (k === 'EDAD' || k === 'SEXO') {
         return { color: 'violet', icon: 'info', text: 'Dato Personal', customMsg: 'Información registrada en el sistema.' };
     }
+// =====================================================================
+    // 🫁 LÓGICA CRUZADA: EPOC Y TABACO
+    // =====================================================================
+    if (k.includes('EPOC')) {
+        // 1. Buscamos qué dice en la columna de Tabaco usando allData
+        const claveTabaco = Object.keys(allData).find(x => x.toUpperCase().includes('TABACO'));
+        const valorTabaco = claveTabaco ? String(allData[claveTabaco]).toLowerCase() : '';
+        
+        // 2. Verificamos si es fumador
+        const esFumador = valorTabaco.includes('fuma') || valorTabaco === 'si';
 
+        if (esFumador) {
+            // Usamos 'v' (que ya está en minúsculas) para comparar
+            if (v.includes('no se verifica')) {
+                return { 
+                    color: 'green', 
+                    icon: 'check', 
+                    text: 'Normal', 
+                    customMsg: 'No se verifica EPOC. Recomendación IMPERIOSA: Dejar de fumar para evitar desarrollar la enfermedad.' 
+                };
+            } else if (v.includes('se verifica')) {
+                return { 
+                    color: 'red', 
+                    icon: 'exclamation', 
+                    text: 'Atención', 
+                    customMsg: 'EPOC Verificado. Se recomienda buscar ayuda médica a la brevedad para iniciar tratamiento.' 
+                };
+            } else if (v.includes('no se realiza') || v === 'pendiente' || v === '') {
+                return { 
+                    color: 'yellow', 
+                    icon: 'exclamation', 
+                    text: 'Pendiente', 
+                    customMsg: 'Al ser fumador, es fundamental realizar una espirometría de control a la brevedad.' 
+                };
+            }
+        }
+    }
     // =====================================================================
     // 🧠 LÓGICA CRUZADA: PAP / HPV (La "Inteligencia Médica" Nueva)
     // =====================================================================
@@ -1742,9 +1778,8 @@ if (btnCerrarBusqueda) {
         document.getElementById('search-container').style.display = 'none';
     });
 }
-
 // ==============================================================================
-// ⚡ FUNCIÓN DE ALTA RÁPIDA (ADMIN)
+// ⚡ FUNCIÓN DE ALTA RÁPIDA (ADMIN) - CON WHATSAPP PERSONALIZADO
 // ==============================================================================
 async function crearUsuarioRapido() {
     const dniInput = document.getElementById('admin-dni-input');
@@ -1753,7 +1788,7 @@ async function crearUsuarioRapido() {
     if (!dni || dni.length < 6) return Swal.fire('Error', 'Ingresa un DNI válido', 'warning');
 
     // Efecto de carga
-    const btn = event.currentTarget; // El botón que se clickeó
+    const btn = event.currentTarget; 
     const originalText = btn.innerHTML;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     btn.disabled = true;
@@ -1772,21 +1807,33 @@ async function crearUsuarioRapido() {
             document.getElementById('admin-resultado').classList.remove('hidden');
             document.getElementById('admin-pass-display').innerText = data.password;
 
-            // 2. Preparar Link de WhatsApp
-            // Mensaje: "Hola! Tu usuario es [DNI] y tu clave: [PASS]. Entrá acá: [URL]"
-            const mensaje = `Hola! 👋 Desde el Programa Día Preventivo te enviamos tus credenciales de acceso.\n\n🆔 *Usuario (DNI):* ${data.dni}\n🔒 *Clave Provisoria:* ${data.password}\n\nIngresa ahora para ver tus estudios: https://portal-afiliado-iapos.onrender.com/`;
+            // 🌟 2. OBTENER EL NOMBRE DEL INFORME ACTUAL
+            let nombrePaciente = "";
+            // Verificamos si hay un nombre guardado en la memoria del informe que estamos viendo
+            if (window.datosImpresionActual && window.datosImpresionActual.nombre) {
+                // Lo ponemos en formato Título (ej: Maria Florencia) o lo dejamos como venga
+                nombrePaciente = window.datosImpresionActual.nombre; 
+            }
+
+            // Armamos el saludo dependiendo de si encontramos el nombre o no
+            const saludo = nombrePaciente ? `Hola *${nombrePaciente}*! 👋` : `Hola! 👋`;
+
+            // 🌟 3. PREPARAR LINK DE WHATSAPP (Con tu nuevo texto)
+            const mensaje = `${saludo} Desde el Programa Día Preventivo IAPOS te enviamos tus credenciales de acceso para que puedas acceder a tu Portal Personal de Salud donde encontrarás los resultados de tus estudios y las recomendaciones de tu equipo de salud! Gracias por hacerte el Día Preventivo y te esperamos pronto.\n\n🆔 *Usuario (DNI):* ${data.dni}\n🔒 *Clave Provisoria:* ${data.password}\n\nIngresa ahora para ver tus estudios: https://portal-afiliado-iapos.onrender.com/`;
             
+            // Codificamos el texto para que los espacios y emojis funcionen en los links web
             const linkWhatsapp = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
             
+            // Le inyectamos el link al botón verde
             document.getElementById('btn-whatsapp-share').href = linkWhatsapp;
 
-            // 3. Feedback visual
+            // 4. Feedback visual
             Swal.fire({
                 toast: true, position: 'top-end', icon: 'success', 
                 title: 'Usuario Generado', showConfirmButton: false, timer: 1500
             });
             
-            dniInput.value = ''; // Limpiar campo
+            dniInput.value = ''; // Limpiar el input
 
         } else {
             Swal.fire('Error', data.error || 'No se pudo crear', 'error');
