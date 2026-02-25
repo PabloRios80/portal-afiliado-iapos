@@ -1769,7 +1769,7 @@ if (btnNuevaBusqueda) {
         document.getElementById('dni-input').value = '';
         document.getElementById('dni-input').focus();
     });
-}
+}document.getElementById('btn-nueva-busqueda')
 
 // 3. Botón "X" para cerrar buscador (por si te arrepientes)
 const btnCerrarBusqueda = document.getElementById('btn-cerrar-busqueda');
@@ -1846,4 +1846,36 @@ async function crearUsuarioRapido() {
         btn.innerHTML = originalText;
         btn.disabled = false;
     }
+}
+// ==============================================================================
+// 🧹 LIMPIAR PANEL DE ALTA RÁPIDA (Evitar que quede el usuario anterior)
+// ==============================================================================
+function resetearPanelAltaRapida() {
+    // 1. Ocultar el recuadro verde con la clave y el botón de WhatsApp
+    const resultadoContainer = document.getElementById('admin-resultado');
+    if (resultadoContainer) {
+        resultadoContainer.classList.add('hidden');
+    }
+
+    // 2. Limpiar el campo donde escribes el DNI
+    const dniInput = document.getElementById('admin-dni-input');
+    if (dniInput) {
+        dniInput.value = '';
+    }
+
+    // 3. Borrar el texto de la contraseña visualmente por seguridad
+    const passwordDisplay = document.getElementById('admin-pass-display');
+    if (passwordDisplay) {
+        passwordDisplay.innerText = '...';
+    }
+}  
+// ==============================================================================
+// 🧹 EVENTO: LIMPIAR PANEL AL BUSCAR OTRO PACIENTE
+// ==============================================================================
+// Esto le agrega la tarea de limpiar al botón, sin importar dónde esté el código original
+const botonBuscarOtro = document.getElementById('btn-nueva-busqueda');
+if (botonBuscarOtro) {
+    botonBuscarOtro.addEventListener('click', () => {
+        resetearPanelAltaRapida();
+    });
 }
