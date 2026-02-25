@@ -300,36 +300,32 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     // 🫁 LÓGICA CRUZADA: EPOC Y TABACO
     // =====================================================================
     if (k.includes('EPOC')) {
-        // 1. Buscamos qué dice en la columna de Tabaco usando allData
-        const claveTabaco = Object.keys(allData).find(x => x.toUpperCase().includes('TABACO'));
-        const valorTabaco = claveTabaco ? String(allData[claveTabaco]).toLowerCase() : '';
+        // 1. Buscamos qué dice en la columna de Tabaco (quitando acentos por si acaso)
+        const claveTabaco = Object.keys(allData).find(x => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().includes('TABACO'));
+        const valorTabaco = claveTabaco ? String(allData[claveTabaco]).toLowerCase().trim() : '';
         
-        // 2. Verificamos si es fumador
-        const esFumador = valorTabaco.includes('fuma') || valorTabaco === 'si';
+        // 2. Verificamos si es fumador (¡LA TRAMPA ESTABA AQUÍ!)
+        // Detectamos específicamente si dice "no fuma", "nunca" o "no"
+        const noFuma = valorTabaco.includes('no fuma') || valorTabaco.includes('nunca') || valorTabaco.includes('ex') || valorTabaco === 'no';
+        
+        // Es fumador SOLO si dice fuma y NO es ninguna de las negativas anteriores
+        const esFumador = (valorTabaco.includes('fuma') && !noFuma) || valorTabaco === 'si';
 
         if (esFumador) {
-            // Usamos 'v' (que ya está en minúsculas) para comparar
+            // --- ES FUMADOR ---
             if (v.includes('no se verifica')) {
-                return { 
-                    color: 'green', 
-                    icon: 'check', 
-                    text: 'Normal', 
-                    customMsg: 'No se verifica EPOC. Recomendación IMPERIOSA: Dejar de fumar para evitar desarrollar la enfermedad.' 
-                };
+                return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'No se verifica EPOC. Recomendación IMPERIOSA: Dejar de fumar para evitar desarrollar la enfermedad.' };
             } else if (v.includes('se verifica')) {
-                return { 
-                    color: 'red', 
-                    icon: 'exclamation', 
-                    text: 'Atención', 
-                    customMsg: 'EPOC Verificado. Se recomienda buscar ayuda médica a la brevedad para iniciar tratamiento.' 
-                };
-            } else if (v.includes('no se realiza') || v === 'pendiente' || v === '') {
-                return { 
-                    color: 'yellow', 
-                    icon: 'exclamation', 
-                    text: 'Pendiente', 
-                    customMsg: 'Al ser fumador, es fundamental realizar una espirometría de control a la brevedad.' 
-                };
+                return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'EPOC Verificado. Se recomienda buscar ayuda médica a la brevedad para iniciar tratamiento.' };
+            } else if (v.includes('no se realiza') || v.includes('pendiente') || v === '') {
+                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Al ser fumador, es fundamental realizar una espirometría de control a la brevedad.' };
+            }
+        } else {
+            // --- NO ES FUMADOR (o Ex Fumador) ---
+            if (v.includes('se verifica')) {
+                return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'EPOC Verificado. Requiere control médico.' };
+            } else {
+                return { color: 'green', icon: 'check', text: 'No Requerido', customMsg: 'Paciente no fumador. La espirometría de tamizaje no es estrictamente necesaria.' };
             }
         }
     }
