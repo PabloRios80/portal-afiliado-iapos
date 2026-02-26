@@ -300,32 +300,66 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     // 🫁 LÓGICA CRUZADA: EPOC Y TABACO
     // =====================================================================
     if (k.includes('EPOC')) {
-        // 1. Buscamos qué dice en la columna de Tabaco (quitando acentos por si acaso)
         const claveTabaco = Object.keys(allData).find(x => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().includes('TABACO'));
         const valorTabaco = claveTabaco ? String(allData[claveTabaco]).toLowerCase().trim() : '';
-        
-        // 2. Verificamos si es fumador (¡LA TRAMPA ESTABA AQUÍ!)
-        // Detectamos específicamente si dice "no fuma", "nunca" o "no"
         const noFuma = valorTabaco.includes('no fuma') || valorTabaco.includes('nunca') || valorTabaco.includes('ex') || valorTabaco === 'no';
-        
-        // Es fumador SOLO si dice fuma y NO es ninguna de las negativas anteriores
         const esFumador = (valorTabaco.includes('fuma') && !noFuma) || valorTabaco === 'si';
 
-        if (esFumador) {
-            // --- ES FUMADOR ---
-            if (v.includes('no se verifica')) {
-                return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'No se verifica EPOC. Recomendación IMPERIOSA: Dejar de fumar para evitar desarrollar la enfermedad.' };
-            } else if (v.includes('se verifica')) {
-                return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'EPOC Verificado. Se recomienda buscar ayuda médica a la brevedad para iniciar tratamiento.' };
-            } else if (v.includes('no se realiza') || v.includes('pendiente') || v === '') {
-                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Al ser fumador, es fundamental realizar una espirometría de control a la brevedad.' };
-            }
-        } else {
-            // --- NO ES FUMADOR (o Ex Fumador) ---
-            if (v.includes('se verifica')) {
-                return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'EPOC Verificado. Requiere control médico.' };
+        // ORDEN CLAVE: Primero buscamos lo negativo, luego lo positivo
+        if (v.includes('no se verifica')) {
+            if (esFumador) {
+                return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'No se verifica EPOC. Recomendación IMPERIOSA: Dejar de fumar para evitar desarrollarlo.' };
             } else {
-                return { color: 'green', icon: 'check', text: 'No Requerido', customMsg: 'Paciente no fumador. La espirometría de tamizaje no es estrictamente necesaria.' };
+                return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Sin hallazgos patológicos.' };
+            }
+        } 
+        else if (v.includes('se verifica')) {
+            return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'EPOC Verificado. Se recomienda buscar ayuda médica para tratamiento.' };
+        } 
+        else {
+            // Si dice "No se realiza" o está vacío
+            if (esFumador) {
+                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Al ser fumador, es fundamental realizar una espirometría de control.' };
+            } else {
+                return { color: 'gray', icon: 'info', text: 'No Requerido', customMsg: 'Paciente no fumador. La espirometría de tamizaje no es estrictamente necesaria.' };
+            }
+        }
+    }
+    // =====================================================================
+    // 🫀 LÓGICA: ANEURISMA DE AORTA (Con filtro de edad)
+    // =====================================================================
+    if (k.includes('ANEURISMA') || k.includes('AORTA')) {
+        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) {
+            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Aorta abdominal sin alteraciones.' };
+        } 
+        else if (v.includes('se verifica') || v.includes('detectad') || v.includes('positivo')) {
+            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
+        } 
+        else if (noRealizado) {
+            // Filtro de edad: Generalmente se busca en mayores de 65
+            if (edad >= 65) {
+                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Ecografía de aorta recomendada por edad.' };
+            } else {
+                return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio no indicado para su rango de edad (menor a 65).' };
+            }
+        }
+    }
+    // =====================================================================
+    // 🦴 LÓGICA: OSTEOPOROSIS / DENSITOMETRÍA (Con filtro de edad)
+    // =====================================================================
+    if (k.includes('OSTEOPOROSIS') || k.includes('DENSITOMETRIA')) {
+        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) {
+            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Densidad ósea dentro de parámetros normales.' };
+        } 
+        else if (v.includes('se verifica') || v.includes('osteopenia') || v.includes('osteoporosis')) {
+            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Densidad ósea reducida. Importante prevenir caídas y consultar tratamiento.' };
+        } 
+        else if (noRealizado) {
+            // Filtro de edad: Generalmente se indica a partir de los 65 años
+            if (edad >= 65) {
+                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Densitometría ósea recomendada a partir de los 65 años.' };
+            } else {
+                return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio indicado generalmente a partir de los 65 años.' };
             }
         }
     }
