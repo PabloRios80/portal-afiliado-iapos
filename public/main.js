@@ -793,305 +793,198 @@ async function updateDashboardContent(selectedIndex) {
 }
 
 // ==============================================================================
-// 4. CONTENIDO DE LAS PESTAÑAS (CORREGIDO PARA IMPRESIÓN)
+// 4. CONTENIDO DE LAS PESTAÑAS (SIN IA - SOLO MOTOR LOCAL)
 // ==============================================================================
-function cargarDiaPreventivoTab(persona, resumenAI) {
-    const nombre = persona['apellido y nombre'] || 'Afiliado';
+function cargarDiaPreventivoTab(persona) {
+    // NOTA: Ya no recibimos 'resumenAI' como parámetro. Todo es local.
     const fechaInforme = persona['FECHAX'] || 'N/A';
-    
-    // --- GUARDA GLOBAL: ESTO ARREGLA EL BOTÓN DE IMPRIMIR ---
-    // Guardamos los datos en una variable global para no pasarlos por HTML y evitar errores de comillas
-    window.datosImpresionActual = {
-        nombre: nombre,
-        texto: resumenAI || ''
-    };
-
-    // --- OBTENCIÓN DE EDAD SEGURA ---
-    const keyEdad = Object.keys(persona).find(k => k.toLowerCase() === 'edad');
-    let edadPaciente = 0;
-    if (keyEdad && persona[keyEdad]) {
-        const edadMatch = String(persona[keyEdad]).match(/\d+/);
-        edadPaciente = edadMatch ? parseInt(edadMatch[0]) : 0;
-    }
-    
-    const sexo = String(window.pacienteSexo || '').toLowerCase().trim(); 
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
+    const sexo = String(window.pacienteSexo || '').toLowerCase().trim(); 
 
-    // 1. SELECTOR DE FECHAS (Historial)
+    // Edad segura
+    const keyEdad = Object.keys(persona).find(k => k.toLowerCase() === 'edad');
+    let edadPaciente = keyEdad && persona[keyEdad] ? parseInt(String(persona[keyEdad]).match(/\d+/)?.[0] || 0) : 0;
+
+    // Selector de historial
     let dateSelectorHTML = ''; 
-    if (allReports.length > 1) { 
+    if (typeof allReports !== 'undefined' && allReports.length > 1) { 
         const optionsHtml = allReports.map((report, index) => `
-            <option value="${index}" ${report.FECHAX === fechaInforme ? 'selected' : ''}>
-                Día Preventivo del ${report.FECHAX} ${index === 0 ? ' (Más Reciente)' : ''}
-            </option>
+            <option value="${index}" ${report.FECHAX === fechaInforme ? 'selected' : ''}>Día Preventivo del ${report.FECHAX} ${index === 0 ? ' (Más Reciente)' : ''}</option>
         `).join('');
-        dateSelectorHTML = `
-            <div class="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg shadow-md">
-                <label for="report-date-selector" class="block text-md font-bold text-yellow-800 mb-2">
-                    <i class="fas fa-history mr-2"></i> Historial de Informes Previos
-                </label>
-                <select id="report-date-selector" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-yellow-500 focus:border-yellow-500 sm:text-sm rounded-md shadow-inner transition duration-150">
-                    ${optionsHtml}
-                </select>
-            </div>
-        `;
+        dateSelectorHTML = `<div class="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg shadow-md"><label for="report-date-selector" class="block text-md font-bold text-yellow-800 mb-2"><i class="fas fa-history mr-2"></i> Historial de Informes Previos</label><select id="report-date-selector" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none sm:text-sm rounded-md shadow-inner">${optionsHtml}</select></div>`;
     }
-// 2. CONSTRUCCIÓN DEL HTML BASE
-    let dashboardHTML = `
-        ${dateSelectorHTML} 
-        
-        <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded-lg shadow-sm">
-            <p class="font-semibold text-blue-700">
-                <i class="fas fa-calendar-alt mr-2"></i> Fecha del Informe Activo: 
-                <span class="font-bold text-blue-900">${fechaInforme}</span>
-                
-                ${edadPaciente > 0 ? `<span class="ml-4 text-sm text-gray-600 italic">(Edad registrada al momento del examen: ${edadPaciente} años)</span>` : ''}
-            </p>
-        </div>
 
-        <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
-            <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Tu Resumen de Salud</h2>
-            <div id="ai-summary-dynamic" class="mb-6 rounded-lg"></div>
+    let tarjetasHTML = '';
+    let resultadosParaMotorLocal = [];
 
-            <h2 class="text-xl font-semibold mb-3 text-gray-800 border-b pb-2">Detalle de Indicadores</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-    `;
-
-    // 3. BUCLE DE INDICADORES
+    // Recorremos los datos para evaluar riesgos y armar las tarjetas inferiores
     for (const [key, value] of Object.entries(persona)) {
-        // 1. Limpiamos el valor (quitamos espacios extra)
         const vLimpio = String(value || '').trim();
-
-        // =====================================================================
-        // 🗑️ FILTRO ANTI-BASURA (NUEVO)
-        // =====================================================================
-        
-        // Regla 1: Si está vacío, es nulo o undefined -> SALTAMOS
-        if (!vLimpio) continue;
-
-        // Regla 2: Si es un solo caracter y NO es un número (ej: "-", ".", "x", "A") -> SALTAMOS
-        // (Esto permite mostrar "0", "1", "5", pero oculta errores de tipeo de una letra)
-        if (vLimpio.length === 1 && isNaN(vLimpio)) continue;
-
-        // Regla 3: Lista negra de símbolos o textos inútiles específicos
+        if (!vLimpio || (vLimpio.length === 1 && isNaN(vLimpio))) continue;
         const basura = ['-', '--', '.', '..', '/', 'n/a', 's/d', 'sd', 'sin dato', 'no aplica'];
         if (basura.includes(vLimpio.toLowerCase())) continue;
-
-        if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'REPORTE_MEDICO'].includes(key)) {
-            continue;
-        }
+        if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'REPORTE_MEDICO'].includes(key)) continue;
 
         const safeValue = String(value || '');
-        const keyUpper = key.toUpperCase();
-        
-        const isRawDate = keyUpper === 'RAWDATE' || safeValue.includes('RAWDATE');
+        const isRawDate = key.toUpperCase() === 'RAWDATE' || safeValue.includes('RAWDATE');
         const isIsoDate = safeValue.includes('T') && safeValue.includes('Z') && safeValue.length > 15;
         if (isRawDate || isIsoDate || safeValue.trim() === '') continue;
 
-        const keyNormalized = keyUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const terminosFemeninos = ['MAMOGRAFIA', 'ECO_MAMARIA', 'ECO MAMARIA', 'HPV', 'PAP', 'ACIDO FOLICO', 'UTERINO'];
-        const terminosMasculinos = ['PROSTATA', 'PSA'];
-
-        if (sexo === 'masculino' && terminosFemeninos.some(t => keyNormalized.includes(t))) continue;
-        if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
-
-        // USA TU LÓGICA DE RIESGO
         const risk = getRiskLevel(key, safeValue, edadPaciente, sexo, persona);
-        const colorMap = {
-            red: 'bg-red-100 border-red-500 text-red-700',
-            yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700',
-            green: 'bg-green-100 border-green-500 text-green-700',
-            gray: 'bg-gray-100 border-gray-400 text-gray-600',
-            violet: 'bg-purple-100 border-purple-500 text-purple-700'
-        };
-        const iconMap = {
-            times: 'fas fa-times-circle', exclamation: 'fas fa-exclamation-triangle',
-            check: 'fas fa-check-circle', question: 'fas fa-question-circle', info: 'fas fa-info-circle',
-        };
-
-        const finalColorClass = colorMap[risk.color] || colorMap['gray'];
-        const mensajeFinal = risk.customMsg ? risk.customMsg : (key.includes('Observaciones') ? safeValue : risk.text);
-
-        dashboardHTML += `
-            <div class="p-4 border-l-4 ${finalColorClass} rounded-md shadow-sm transition hover:shadow-lg">
-                <div class="flex items-center justify-between mb-1">
-                    <h3 class="font-bold text-md">${key}</h3> 
-                    <span class="font-semibold text-sm px-2 py-0.5 rounded-full bg-white border border-gray-200 shadow-sm text-gray-700 whitespace-nowrap ml-2">
-                        ${risk.text}
-                    </span>
-                </div>
-                <p class="text-sm italic mb-2 text-gray-800 mt-2">${safeValue}</p>
-                <div class="text-xs flex items-center mt-3 border-t pt-2 border-${risk.color}-200 opacity-90 font-medium">
-                    <i class="${iconMap[risk.icon]} mr-2"></i> ${mensajeFinal}
-                </div>
-            </div>
-        `;
-    }
-
-    dashboardHTML += `</div> </div>`;
-    dashboardContenedor.innerHTML = dashboardHTML;
-
-    // 4. INYECTAR IA
-    configurarSeccionIA(persona, resumenAI);
-
-    // 5. LISTENER DEL SELECTOR
-    if (allReports.length > 1) {
-        const selector = document.getElementById('report-date-selector');
-        if (selector) {
-            selector.addEventListener('change', (event) => {
-                updateDashboardContent(event.target.value); 
-            });
+        
+        // Guardar para el Motor Local (Si no es gris ni violeta)
+        if (risk.color !== 'violet' && risk.color !== 'gray') {
+            resultadosParaMotorLocal.push({ indicador: key, color: risk.color, customMsg: risk.customMsg || risk.text });
         }
+
+        const colorMap = { red: 'bg-red-100 border-red-500 text-red-700', yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700', green: 'bg-green-100 border-green-500 text-green-700', gray: 'bg-gray-100 border-gray-400 text-gray-600', violet: 'bg-purple-100 border-purple-500 text-purple-700' };
+        const iconMap = { times: 'fas fa-times-circle', exclamation: 'fas fa-exclamation-triangle', check: 'fas fa-check-circle', question: 'fas fa-question-circle', info: 'fas fa-info-circle' };
+
+        tarjetasHTML += `
+            <div class="p-4 border-l-4 ${colorMap[risk.color] || colorMap.gray} rounded-md shadow-sm transition hover:shadow-lg">
+                <div class="flex items-center justify-between mb-1"><h3 class="font-bold text-md">${key}</h3><span class="font-semibold text-sm px-2 py-0.5 rounded-full bg-white border border-gray-200 shadow-sm text-gray-700 whitespace-nowrap ml-2">${risk.text}</span></div>
+                <p class="text-sm italic mb-2 text-gray-800 mt-2">${safeValue}</p>
+                <div class="text-xs flex items-center mt-3 border-t pt-2 border-${risk.color}-200 opacity-90 font-medium"><i class="${iconMap[risk.icon] || iconMap.info} mr-2"></i> ${risk.customMsg || safeValue}</div>
+            </div>`;
     }
 
-    // Botones de acción inferior (AQUÍ ESTÁ EL ARREGLO DEL BOTÓN)
-    // Fíjate que ahora onclick llama a mostrarInformeEscrito() SIN PARÁMETROS
-    let accionesHTML = `
-        <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
-            <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa Día Preventivo</p>
-            <p class="text-gray-700 mb-1"><span class="font-semibold">Teléfono Consultas:</span> <a href="tel:3424071702" class="text-blue-600 font-medium">342 407-1702</a></p>
-            <p class="text-gray-700"><span class="font-semibold">Mail de Consultas:</span> <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 font-medium">diapreventivoiapos@diapreventivo.com</a></p>
-        </div>
-        <div class="flex flex-wrap items-center justify-center py-4">
-            <button onclick="mostrarInformeEscrito()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
-                <i class="fas fa-file-alt mr-2"></i> Informe Escrito (Ver/Imprimir)
-            </button>
-            <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 mx-2 mt-2">
-                <i class="fas fa-share-alt mr-2"></i> Compartir Portal
-            </button>
+    // GENERAMOS EL REPORTE FINAL CON EL MOTOR LOCAL
+    // Si ya existía un reporte guardado en la base de datos por un médico (REPORTE_MEDICO), usamos ese. Si no, generamos el nuevo automático.
+    const informeFinalHTML = persona['REPORTE_MEDICO'] ? persona['REPORTE_MEDICO'] : generarResumenMedicoLocal(persona, resultadosParaMotorLocal);
+
+    // Guardamos en la memoria global para que el botón de Imprimir funcione
+    window.datosImpresionActual = {
+        nombre: persona['apellido y nombre'] || 'Afiliado',
+        texto: informeFinalHTML
+    };
+
+    // Armamos la pantalla
+    dashboardContenedor.innerHTML = `
+        ${dateSelectorHTML} 
+        <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
+            <div id="ai-summary-dynamic" class="mb-6 rounded-lg"></div>
+
+            <h2 class="text-xl font-semibold mb-3 mt-8 text-gray-800 border-b pb-2">Detalle Clínico de Indicadores</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">${tarjetasHTML}</div>
         </div>
     `;
-    accionesContenedor.innerHTML = accionesHTML;
+
+    // ACTIVAMOS EL EDITOR (Le pasamos el HTML generado localmente)
+    configurarEditorInformeLocal(persona, informeFinalHTML);
+
+    if (typeof allReports !== 'undefined' && allReports.length > 1) {
+        document.getElementById('report-date-selector')?.addEventListener('change', (e) => updateDashboardContent(e.target.value));
+    }
+
+    accionesContenedor.innerHTML = `
+        <div class="mt-4 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-md text-left w-full md:w-3/4 mx-auto mb-6">
+            <p class="font-bold text-lg text-blue-800 mb-2"><i class="fas fa-phone-square-alt mr-2"></i> Contacto Directo del Programa</p>
+            <p class="text-gray-700 mb-1"><span class="font-semibold">Teléfono:</span> <a href="tel:3424071702" class="text-blue-600 font-medium">342 407-1702</a></p>
+            <p class="text-gray-700"><span class="font-semibold">Mail:</span> <a href="mailto:diapreventivoiapos@diapreventivo.com" class="text-blue-600 font-medium">diapreventivoiapos@diapreventivo.com</a></p>
+        </div>
+        <div class="flex flex-wrap items-center justify-center py-4">
+            <button onclick="mostrarInformeEscrito()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition mx-2 mt-2"><i class="fas fa-file-alt mr-2"></i> Informe Escrito (Ver/Imprimir)</button>
+            <button onclick="compartirDashboard()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition mx-2 mt-2"><i class="fas fa-share-alt mr-2"></i> Compartir Portal</button>
+        </div>
+    `;
 }
 // ==============================================================================
-// 5. FUNCIONES IA: BARRA DE HERRAMIENTAS COMPLETA (EDITAR + GUARDAR)
+// 5. BARRA DE HERRAMIENTAS DEL INFORME (EDITAR + GUARDAR)
 // ==============================================================================
-
-function configurarSeccionIA(persona, resumenAI) {
+function configurarEditorInformeLocal(persona, informeHTML) {
     const containerAI = document.getElementById('ai-summary-dynamic');
-    
-    const hayInforme = resumenAI && resumenAI.length > 10 && !resumenAI.includes("ERROR");
+    containerAI.innerHTML = ""; // Limpiamos
 
-    if (hayInforme) {
-        // Actualizamos memoria inicial
-        window.datosImpresionActual = {
-            nombre: persona['apellido y nombre'] || 'Afiliado',
-            texto: resumenAI
+    // --- 1. PESTAÑA VISTA PREVIA ---
+    const tabContainer = document.createElement('div');
+    tabContainer.className = "flex border-b border-gray-300 mb-4";
+    const tabVista = document.createElement('button');
+    tabVista.className = "py-2 px-6 text-blue-600 border-b-2 border-blue-600 font-bold focus:outline-none bg-white hover:bg-gray-50 rounded-t-md transition";
+    tabVista.innerHTML = '<i class="fas fa-file-medical text-lg mr-2"></i> Informe del Paciente';
+    tabContainer.appendChild(tabVista);
+    containerAI.appendChild(tabContainer);
+
+    // --- 2. CONTENEDOR DEL INFORME ---
+    const divInforme = document.createElement('div');
+    divInforme.id = "contenido-informe-visual";
+    divInforme.className = "bg-white p-2 min-h-[200px]";
+    divInforme.innerHTML = informeHTML; 
+    containerAI.appendChild(divInforme);
+    
+    // --- 3. BARRA DE HERRAMIENTAS (SOLO PARA ADMIN) ---
+    if (currentUser && currentUser.rol === 'admin') {
+        const barraHerramientas = document.createElement('div');
+        barraHerramientas.className = "mt-6 flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200";
+        
+        barraHerramientas.innerHTML = `
+            <div class="text-xs text-gray-500 font-medium">
+                <i class="fas fa-edit text-blue-500"></i> Opciones de Médico
+            </div>
+            <div>
+                <button id="btn-editar-visual" class="bg-white text-blue-700 border border-blue-300 px-4 py-2 rounded shadow-sm hover:bg-blue-50 transition font-medium text-sm mr-2">
+                    <i class="fas fa-pen mr-2"></i>Editar Texto
+                </button>
+                <button id="btn-guardar-visual" class="bg-green-600 text-white px-6 py-2 rounded shadow hover:bg-green-700 transition font-bold text-sm">
+                    <i class="fas fa-check mr-2"></i>Guardar / Confirmar
+                </button>
+                <button id="btn-cancelar-visual" class="hidden bg-gray-400 text-white px-3 py-2 rounded shadow hover:bg-gray-500 transition font-medium text-sm ml-2">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `;
+        containerAI.appendChild(barraHerramientas);
+
+        // LÓGICA DE BOTONES
+        const btnEditar = document.getElementById('btn-editar-visual');
+        const btnGuardar = document.getElementById('btn-guardar-visual');
+        const btnCancelar = document.getElementById('btn-cancelar-visual');
+
+        // EDITAR
+        btnEditar.onclick = () => alternarEdicionVisual(true, divInforme);
+
+        // GUARDAR (Guarda los cambios manuales en el Excel, columna REPORTE_MEDICO)
+        btnGuardar.onclick = async () => {
+            const textoFinal = divInforme.innerHTML;
+            const btnTextoOriginal = btnGuardar.innerHTML;
+            
+            btnGuardar.disabled = true;
+            btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
+
+            try {
+                // Sigue usando la misma ruta que usábamos para guardar el de la IA
+                const response = await fetch('/api/actualizar-informe-ia', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        dni: persona.DNI || persona.dni,
+                        nombre: persona['apellido y nombre'], 
+                        nuevoInforme: textoFinal 
+                    })
+                });
+
+                if (!response.ok) throw new Error("Error al guardar");
+
+                window.datosImpresionActual.texto = textoFinal;
+                
+                Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: '¡Informe Guardado!', showConfirmButton: false, timer: 2000 });
+                alternarEdicionVisual(false, divInforme);
+
+            } catch (error) {
+                console.error("Error:", error);
+                Swal.fire('Error', 'No se pudo guardar.', 'error');
+            } finally {
+                btnGuardar.disabled = false;
+                btnGuardar.innerHTML = btnTextoOriginal;
+            }
         };
 
-        containerAI.innerHTML = ""; // Limpiamos
-
-        // --- 1. PESTAÑA VISTA PREVIA ---
-        const tabContainer = document.createElement('div');
-        tabContainer.className = "flex border-b border-gray-300 mb-4";
-        const tabVista = document.createElement('button');
-        tabVista.className = "py-2 px-6 text-blue-600 border-b-2 border-blue-600 font-bold focus:outline-none bg-white hover:bg-gray-50 rounded-t-md transition";
-        tabVista.innerHTML = '<i class="fas fa-eye mr-2"></i>Vista Previa';
-        tabContainer.appendChild(tabVista);
-        containerAI.appendChild(tabContainer);
-
-        // --- 2. CONTENEDOR DEL INFORME ---
-        const divInforme = document.createElement('div');
-        divInforme.id = "contenido-informe-visual";
-        divInforme.className = "bg-white p-2 min-h-[200px]";
-        divInforme.innerHTML = resumenAI; 
-        containerAI.appendChild(divInforme);
-        
-        // --- 3. BARRA DE HERRAMIENTAS (BOTONES JUNTOS) ---
-        if (currentUser && currentUser.rol === 'admin') {
-            const barraHerramientas = document.createElement('div');
-            barraHerramientas.className = "mt-6 flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200";
-            
-            // Aquí quitamos el 'hidden' del botón Guardar para que se vea siempre
-            barraHerramientas.innerHTML = `
-                <div class="text-xs text-gray-500 font-medium">
-                    <i class="fas fa-magic text-purple-500"></i> Opciones IA
-                </div>
-                <div>
-                    <button id="btn-editar-visual" class="bg-white text-blue-700 border border-blue-300 px-4 py-2 rounded shadow-sm hover:bg-blue-50 transition font-medium text-sm mr-2">
-                        <i class="fas fa-pen mr-2"></i>Editar Texto
-                    </button>
-                    
-                    <button id="btn-guardar-visual" class="bg-green-600 text-white px-6 py-2 rounded shadow hover:bg-green-700 transition font-bold text-sm">
-                        <i class="fas fa-check mr-2"></i>Guardar / Confirmar
-                    </button>
-
-                    <button id="btn-cancelar-visual" class="hidden bg-gray-400 text-white px-3 py-2 rounded shadow hover:bg-gray-500 transition font-medium text-sm ml-2">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            `;
-            containerAI.appendChild(barraHerramientas);
-
-            // --- LÓGICA DE BOTONES ---
-            const btnEditar = document.getElementById('btn-editar-visual');
-            const btnGuardar = document.getElementById('btn-guardar-visual');
-            const btnCancelar = document.getElementById('btn-cancelar-visual');
-
-            // 1. EDITAR: Activa el modo Word
-            btnEditar.onclick = () => alternarEdicionVisual(true, divInforme);
-            // ... dentro de configurarSeccionIA ...
-
-            btnGuardar.onclick = async () => {
-                const textoFinal = divInforme.innerHTML;
-                const btnTextoOriginal = btnGuardar.innerHTML;
-                
-                // Efecto visual de carga
-                btnGuardar.disabled = true;
-                btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
-
-                try {
-                    // 👇 AQUÍ ESTABA EL ERROR: Quitamos ${API_URL} y dejamos solo la barra /
-                    const response = await fetch('/api/actualizar-informe-ia', { 
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            dni: persona.DNI || persona.dni,
-                            nombre: persona['apellido y nombre'], 
-                            nuevoInforme: textoFinal 
-                        })
-                    });
-
-                    const resultado = await response.json();
-
-                    if (!response.ok) throw new Error(resultado.error || "Error al guardar");
-
-                    // ÉXITO
-                    window.datosImpresionActual.texto = textoFinal;
-                    
-                    Swal.fire({
-                        toast: true,
-                        position: 'top-end',
-                        icon: 'success',
-                        title: '¡Guardado en Informes IA!',
-                        showConfirmButton: false,
-                        timer: 2000
-                    });
-
-                    alternarEdicionVisual(false, divInforme);
-
-                } catch (error) {
-                    console.error("Error:", error);
-                    // Mensaje más claro para ti
-                    Swal.fire('Error', 'No se pudo guardar. ' + error.message, 'error');
-                } finally {
-                    btnGuardar.disabled = false;
-                    btnGuardar.innerHTML = btnTextoOriginal;
-                }
-            };
-            // 3. CANCELAR: Deshace cambios
-            btnCancelar.onclick = () => {
-                divInforme.innerHTML = resumenAI; // Restauramos original
-                window.datosImpresionActual.texto = resumenAI;
-                alternarEdicionVisual(false, divInforme);
-            };
-        }
-
-    } else if (currentUser && currentUser.rol === 'admin') {
-        mostrarPanelGenerador(persona, containerAI);
-    } else {
-        containerAI.innerHTML = `<div class="bg-gray-100 p-6 text-center">Informe en proceso.</div>`;
+        // CANCELAR
+        btnCancelar.onclick = () => {
+            divInforme.innerHTML = informeHTML; 
+            window.datosImpresionActual.texto = informeHTML;
+            alternarEdicionVisual(false, divInforme);
+        };
     }
 }
 
@@ -1908,4 +1801,111 @@ if (botonBuscarOtro) {
     botonBuscarOtro.addEventListener('click', () => {
         resetearPanelAltaRapida();
     });
+}
+// ==============================================================================
+// 🧠 MOTOR DE SÍNTESIS CLÍNICA LOCAL (DISEÑO TIPO IA - INSTANTÁNEO)
+// ==============================================================================
+function generarResumenMedicoLocal(persona, resultadosEvaluados) {
+    // 1. EXTRAER DATOS DEL ENCABEZADO
+    const nombreCompleto = persona['apellido y nombre'] || persona['Nombre'] || 'Paciente';
+    const primerNombre = nombreCompleto.split(' ')[0];
+    const dni = persona['DNI'] || persona['dni'] || 'S/D';
+    const fecha = persona['FECHAX'] || 'S/D';
+    const profesional = persona['Profesional'] || persona['PROFESIONAL'] || 'tu médico/a preventivista';
+    const efector = persona['Efector'] || persona['EFECTOR'] || 'IAPOS';
+
+    // 2. CREAR EL ENCABEZADO Y SALUDO (Igual a la imagen)
+    let html = `
+        <div class="overflow-x-auto mb-8 mt-4">
+            <table class="min-w-full bg-gray-50 rounded-lg overflow-hidden text-sm text-left text-gray-700 shadow-sm border border-gray-200">
+                <thead class="bg-gray-100 text-gray-600 font-semibold border-b border-gray-200">
+                    <tr>
+                        <th class="py-3 px-4">Fecha del Examen</th>
+                        <th class="py-3 px-4">Profesional Responsable</th>
+                        <th class="py-3 px-4">Efector (Lugar)</th>
+                        <th class="py-3 px-4">DNI</th>
+                        <th class="py-3 px-4">Paciente</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="py-3 px-4">${fecha}</td>
+                        <td class="py-3 px-4">${profesional}</td>
+                        <td class="py-3 px-4">${efector}</td>
+                        <td class="py-3 px-4">${dni}</td>
+                        <td class="py-3 px-4 font-bold text-blue-700">${nombreCompleto}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2 class="text-3xl font-bold text-gray-800 mb-3">Hola ${primerNombre},</h2>
+        <p class="text-gray-600 mb-8 leading-relaxed text-lg">
+            Te felicitamos por haberte decidido a hacer el <strong>Día Preventivo</strong> y pensar en la prevención de manera seria y responsable. 
+            Este es un resumen de tu Día Preventivo, confeccionado de forma automática basado estrictamente en el informe de <strong>${profesional}</strong>, quien ha analizado todos tus resultados.
+        </p>
+    `;
+
+    // 3. CLASIFICADOR DE TARJETAS (Agrupa los indicadores por temática)
+    const grupos = {
+        '🫀 Salud Cardiovascular y Renal': [],
+        '🧠 Hábitos y Bienestar': [],
+        '🎗️ Prevención Oncológica': [],
+        '🦠 Enfermedades Infecciosas': [],
+        '📋 Salud General y Otros': []
+    };
+
+    resultadosEvaluados.forEach(item => {
+        const ind = item.indicador.toUpperCase();
+        if (ind.includes('PRESION') || ind.includes('IMC') || ind.includes('RENAL') || ind.includes('RIESGO') || ind.includes('DIABETES') || ind.includes('COLESTEROL') || ind.includes('LIPID') || ind.includes('AORTA')) {
+            grupos['🫀 Salud Cardiovascular y Renal'].push(item);
+        } else if (ind.includes('TABACO') || ind.includes('ALCOHOL') || ind.includes('MENTAL') || ind.includes('ENTORNO') || ind.includes('VIAL') || ind.includes('DEPRESION') || ind.includes('VIOLENCIA')) {
+            grupos['🧠 Hábitos y Bienestar'].push(item);
+        } else if (ind.includes('MAMOGRAFIA') || ind.includes('PAP') || ind.includes('HPV') || ind.includes('PROSTATA') || ind.includes('PSA') || ind.includes('COLON') || ind.includes('SANGRE')) {
+            grupos['🎗️ Prevención Oncológica'].push(item);
+        } else if (ind.includes('CHAGAS') || ind.includes('SIFILIS') || ind.includes('VIH') || ind.includes('HEPATITIS') || ind.includes('VDRL')) {
+            grupos['🦠 Enfermedades Infecciosas'].push(item);
+        } else {
+            grupos['📋 Salud General y Otros'].push(item);
+        }
+    });
+
+    // 4. DIBUJAR LAS TARJETAS (Grid de 2 columnas)
+    html += `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">`;
+    
+    for (const [nombreGrupo, items] of Object.entries(grupos)) {
+        if (items.length > 0) {
+            // Colores de borde según el grupo para darle variedad
+            let borderColor = 'border-blue-200'; let bgColor = 'bg-blue-50'; let titleColor = 'text-blue-800';
+            if(nombreGrupo.includes('Cardiovascular')) { borderColor = 'border-green-200'; bgColor = 'bg-green-50'; titleColor = 'text-green-800'; }
+            if(nombreGrupo.includes('Hábitos')) { borderColor = 'border-indigo-200'; bgColor = 'bg-indigo-50'; titleColor = 'text-indigo-800'; }
+            if(nombreGrupo.includes('Oncológica')) { borderColor = 'border-purple-200'; bgColor = 'bg-purple-50'; titleColor = 'text-purple-800'; }
+            
+            html += `
+                <div class="${bgColor} border ${borderColor} p-6 rounded-xl shadow-sm">
+                    <h3 class="font-bold ${titleColor} mb-4 text-lg border-b pb-2 ${borderColor}">${nombreGrupo}</h3>
+                    <ul class="space-y-3">
+            `;
+            
+            items.forEach(item => {
+                // Destacar colores: Rojo = ⚠️ Alerta, Amarillo = ⏳ Pendiente, Verde = Texto normal
+                let colorClase = 'text-gray-700';
+                let icon = '•';
+                if (item.color === 'red') { colorClase = 'text-red-600 font-bold'; icon = '⚠️'; }
+                if (item.color === 'yellow') { colorClase = 'text-yellow-700 font-semibold'; icon = '⏳'; }
+
+                html += `
+                    <li class="text-sm leading-tight">
+                        <span class="font-bold text-gray-900 mr-1">${icon} ${item.indicador}:</span>
+                        <span class="${colorClase}">${item.customMsg}</span>
+                    </li>
+                `;
+            });
+            
+            html += `</ul></div>`;
+        }
+    }
+    html += `</div>`; // Cierra el Grid
+
+    return html;
 }
