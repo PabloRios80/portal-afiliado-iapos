@@ -1806,9 +1806,26 @@ if (botonBuscarOtro) {
 // 🧠 MOTOR DE SÍNTESIS CLÍNICA LOCAL (DISEÑO TIPO IA - INSTANTÁNEO)
 // ==============================================================================
 function generarResumenMedicoLocal(persona, resultadosEvaluados) {
-    // 1. EXTRAER DATOS DEL ENCABEZADO
+   // =========================================================
+    // 1. EXTRAER DATOS DEL ENCABEZADO (CON LECTURA INTELIGENTE)
+    // =========================================================
     const nombreCompleto = persona['apellido y nombre'] || persona['Nombre'] || 'Paciente';
-    const primerNombre = nombreCompleto.split(' ')[0];
+    
+    // Magia para sacar el primer nombre real
+    let primerNombre = "Paciente";
+    if (nombreCompleto !== 'Paciente') {
+        if (nombreCompleto.includes(',')) {
+            // Si viene como "Arizaga, Gaston" -> tomamos lo que está después de la coma
+            primerNombre = nombreCompleto.split(',')[1].trim().split(' ')[0];
+        } else {
+            // Si viene como "Arizaga Gaston" -> tomamos la segunda palabra
+            const partes = nombreCompleto.trim().split(' ');
+            primerNombre = partes.length > 1 ? partes[1] : partes[0];
+        }
+        // Lo ponemos en formato Título (Gaston) en lugar de GASTON
+        primerNombre = primerNombre.charAt(0).toUpperCase() + primerNombre.slice(1).toLowerCase();
+    }
+
     const dni = persona['DNI'] || persona['dni'] || 'S/D';
     const fecha = persona['FECHAX'] || 'S/D';
     const profesional = persona['Profesional'] || persona['PROFESIONAL'] || 'tu médico/a preventivista';
