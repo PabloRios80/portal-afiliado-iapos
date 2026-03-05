@@ -636,9 +636,7 @@ async function updateDashboardContent(selectedIndex) {
     const resumenAIFecha = await obtenerResumenAI(nuevoReporte);
     cargarDiaPreventivoTab(nuevoReporte, resumenAIFecha);
 }
-
-// ==============================================================================
-// 4. CONTENIDO DE LAS PESTAÑAS (SIN IA - SOLO MOTOR LOCAL)
+// 4. CONTENIDO DE LAS PESTAÑAS (AQUÍ CAPTURAMOS SI ES "PENDIENTE")
 // ==============================================================================
 function cargarDiaPreventivoTab(persona) {
     const fechaInforme = persona['FECHAX'] || 'N/A';
@@ -690,8 +688,16 @@ function cargarDiaPreventivoTab(persona) {
         if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
 
         const risk = getRiskLevel(key, safeValue, edadPaciente, sexo, persona);
+        
         if (risk.color !== 'violet' && risk.color !== 'gray') {
-            resultadosParaMotorLocal.push({ indicador: key, color: risk.color, customMsg: risk.customMsg || risk.text });
+            // AHORA GUARDAMOS EL ESTADO (Para saber si es PENDIENTE o PATOLÓGICO)
+            resultadosParaMotorLocal.push({ 
+                indicador: key, 
+                color: risk.color, 
+                estado: risk.text,  // <-- Esto es clave para la biblioteca
+                valor: safeValue,
+                customMsg: risk.customMsg || risk.text 
+            });
         }
 
         const colorMap = { red: 'bg-red-100 border-red-500 text-red-700', yellow: 'bg-yellow-100 border-yellow-500 text-yellow-700', green: 'bg-green-100 border-green-500 text-green-700', gray: 'bg-gray-100 border-gray-400 text-gray-600', violet: 'bg-purple-100 border-purple-500 text-purple-700' };
@@ -744,7 +750,6 @@ function cargarDiaPreventivoTab(persona) {
         </div>
     `;
 }
-
 // ==============================================================================
 // 5. BARRA DE HERRAMIENTAS DEL INFORME
 // ==============================================================================
@@ -1253,7 +1258,55 @@ if (botonBuscarOtro) {
         resetearPanelAltaRapida();
     });
 }
+// ==============================================================================
+// 🧠 MOTOR DE SÍNTESIS CLÍNICA LOCAL (SISTEMA DE TRIAGE + BIBLIOTECA)
+// ==============================================================================
 
+// 📚 LA BIBLIOTECA CLÍNICA: Aquí puedes agregar todos los mensajes personalizados que quieras
+function obtenerMensajeBiblioteca(indicador, mensajeBase, color) {
+    const ind = indicador.toUpperCase();
+    
+    // --- EXPLICACIONES PARA RESULTADOS ROJOS Y AMARILLOS ---
+    if (ind.includes('PRESION') || ind.includes('ARTERIAL')) {
+        return "Tus valores de presión arterial están elevados. Esto puede ser un signo de hipertensión, una condición silenciosa que hace trabajar de más a tu corazón y daña las arterias a largo plazo. Te sugerimos realizar un control seriado de presión.";
+    }
+    if (ind.includes('DIABETES') || ind.includes('GLUCEMIA')) {
+        return "Detectamos alteraciones en tus niveles de azúcar en sangre. La diabetes o prediabetes no tratada afecta muchos órganos del cuerpo. Es fundamental iniciar cambios en la dieta y consultar para posible medicación.";
+    }
+    if (ind.includes('COLESTEROL') || ind.includes('LIPID')) {
+        return "Tus niveles de grasas (colesterol/triglicéridos) en sangre requieren atención. Esto favorece la formación de placas en las arterias, aumentando el riesgo de problemas cardíacos.";
+    }
+    if (ind.includes('TABACO') || ind.includes('FUMA')) {
+        return "Notamos que tienes el hábito de fumar. El tabaquismo es el principal factor de riesgo evitable para múltiples enfermedades respiratorias y cardiovasculares. ¡Nunca es tarde para dejarlo! IAPOS puede ayudarte.";
+    }
+    if (ind.includes('SOMF') || ind.includes('COLON')) {
+        return "El rastreo de cáncer de colon requiere tu atención urgente. Detectar a tiempo pequeñas lesiones (pólipos) a través de una videocolonoscopia salva vidas de manera efectiva.";
+    }
+    if (ind.includes('MAMOGRAFIA') || ind.includes('MAMA')) {
+        return "Tus estudios mamarios presentan hallazgos que tu ginecólogo/a debe revisar. En la gran mayoría de los casos son situaciones tratables si se atienden a la brevedad.";
+    }
+    if (ind.includes('PAP') || ind.includes('HPV')) {
+        return "Los estudios de prevención ginecológica mostraron alteraciones. Es muy importante que no dejes pasar el tiempo y asistas a una consulta especializada para un seguimiento seguro.";
+    }
+    if (ind.includes('DEPRESION') || ind.includes('MENTAL')) {
+        return "El tamizaje detectó signos de que tu estado de ánimo no está en su mejor momento. La salud mental es igual de prioritaria que la física. Te animamos a buscar contención profesional.";
+    }
+    if (ind.includes('IMC') || ind.includes('PESO') || ind.includes('OBESIDAD')) {
+        return "Tu relación de peso y altura indica un riesgo metabólico. Un abordaje nutricional y sumar movimiento a tu rutina diaria son los primeros pasos para revertirlo.";
+    }
+    if (ind.includes('VIH') || ind.includes('SIFILIS') || ind.includes('CHAGAS')) {
+        return "El laboratorio detectó un resultado en tus pruebas infecciosas que requiere confirmación y tratamiento con un especialista. Existen tratamientos altamente efectivos hoy en día.";
+    }
+    if (ind.includes('AGUDEZA') || ind.includes('VISUAL')) {
+        return "Tu visión presenta algunas alteraciones. Te sugerimos agendar una visita oftalmológica para evitar forzar la vista y corregir el problema tempranamente.";
+    }
+
+    // Si no está en la biblioteca, devuelve el mensaje original que calculó la regla
+    return mensajeBase; 
+}
+// ==============================================================================
+// 🧠 MOTOR DE SÍNTESIS CLÍNICA (USANDO LA BIBLIOTECA EXTERNA)
+// ==============================================================================
 function generarResumenMedicoLocal(persona, resultadosEvaluados) {
     const nombreCompleto = persona['apellido y nombre'] || persona['Nombre'] || 'Paciente';
     
@@ -1270,7 +1323,7 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
 
     const dni = persona['DNI'] || persona['dni'] || 'S/D';
     const fecha = persona['FECHAX'] || 'S/D';
-    const profesional = persona['Profesional'] || persona['PROFESIONAL'] || 'tu médico/a preventivista';
+    const profesional = persona['Profesional'] || persona['PROFESIONAL'] || 'tu equipo médico';
     const efector = persona['Efector'] || persona['EFECTOR'] || 'IAPOS';
 
     let html = `
@@ -1278,7 +1331,7 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
             <table class="min-w-full bg-gray-50 rounded-lg overflow-hidden text-sm text-left text-gray-700 shadow-sm border border-gray-200">
                 <thead class="bg-gray-100 text-gray-600 font-semibold border-b border-gray-200">
                     <tr>
-                        <th class="py-3 px-4">Fecha del Examen</th>
+                        <th class="py-3 px-4">Fecha</th>
                         <th class="py-3 px-4">Profesional Responsable</th>
                         <th class="py-3 px-4">Efector (Lugar)</th>
                         <th class="py-3 px-4">DNI</th>
@@ -1288,7 +1341,7 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
                 <tbody>
                     <tr>
                         <td class="py-3 px-4">${fecha}</td>
-                        <td class="py-3 px-4">${profesional}</td>
+                        <td class="py-3 px-4 font-medium">${profesional}</td>
                         <td class="py-3 px-4">${efector}</td>
                         <td class="py-3 px-4">${dni}</td>
                         <td class="py-3 px-4 font-bold text-blue-700">${nombreCompleto}</td>
@@ -1299,67 +1352,109 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
 
         <h2 class="text-3xl font-bold text-gray-800 mb-3">Hola ${primerNombre},</h2>
         <p class="text-gray-600 mb-8 leading-relaxed text-lg">
-            Te felicitamos por haberte decidido a hacer el <strong>Día Preventivo</strong> y pensar en la prevención de manera seria y responsable. 
-            Este es un resumen de tu Día Preventivo, confeccionado de forma automática basado estrictamente en el informe de <strong>${profesional}</strong>, quien ha analizado todos tus resultados.
+            Te felicitamos por haberte decidido a hacer el <strong>Día Preventivo</strong> y pensar en tu salud de manera seria y responsable. 
+            Este es tu informe personal, elaborado estrictamente en base a la evaluación clínica de <strong>${profesional}</strong>. 
+            A continuación, hemos organizado tus resultados por nivel de prioridad para ayudarte a tomar las mejores decisiones.
         </p>
     `;
 
-    const grupos = {
-        '🫀 Salud Cardiovascular y Renal': [],
-        '🧠 Hábitos y Bienestar': [],
-        '🎗️ Prevención Oncológica': [],
-        '🦠 Enfermedades Infecciosas': [],
-        '📋 Salud General y Otros': []
-    };
+    const rojos = resultadosEvaluados.filter(r => r.color === 'red');
+    const amarillos = resultadosEvaluados.filter(r => r.color === 'yellow');
+    const verdes = resultadosEvaluados.filter(r => r.color === 'green');
 
-    resultadosEvaluados.forEach(item => {
-        const ind = item.indicador.toUpperCase();
-        if (ind.includes('PRESION') || ind.includes('IMC') || ind.includes('RENAL') || ind.includes('RIESGO') || ind.includes('DIABETES') || ind.includes('COLESTEROL') || ind.includes('LIPID') || ind.includes('AORTA')) {
-            grupos['🫀 Salud Cardiovascular y Renal'].push(item);
-        } else if (ind.includes('TABACO') || ind.includes('ALCOHOL') || ind.includes('MENTAL') || ind.includes('ENTORNO') || ind.includes('VIAL') || ind.includes('DEPRESION') || ind.includes('VIOLENCIA')) {
-            grupos['🧠 Hábitos y Bienestar'].push(item);
-        } else if (ind.includes('MAMOGRAFIA') || ind.includes('PAP') || ind.includes('HPV') || ind.includes('PROSTATA') || ind.includes('PSA') || ind.includes('COLON') || ind.includes('SANGRE')) {
-            grupos['🎗️ Prevención Oncológica'].push(item);
-        } else if (ind.includes('CHAGAS') || ind.includes('SIFILIS') || ind.includes('VIH') || ind.includes('HEPATITIS') || ind.includes('VDRL')) {
-            grupos['🦠 Enfermedades Infecciosas'].push(item);
-        } else {
-            grupos['📋 Salud General y Otros'].push(item);
-        }
-    });
+    // CAJA ROJA
+    if (rojos.length > 0) {
+        html += `
+        <div class="bg-red-50 border-l-8 border-red-600 p-6 rounded-lg mb-8 shadow-md">
+            <div class="flex items-center mb-4">
+                <i class="fas fa-exclamation-circle text-red-600 text-3xl mr-3"></i>
+                <h3 class="text-2xl font-bold text-red-800">Prioridad Alta: Foco Inmediato</h3>
+            </div>
+            <p class="text-red-700 font-medium mb-5 text-lg">
+                Vamos a hacer foco en los temas de tu salud de los que nos gustaría que te ocupes de manera pronta. Por favor, revisa lo siguiente:
+            </p>
+            <div class="space-y-4">
+        `;
+        
+        rojos.forEach(item => {
+            // Llama a tu biblioteca externa. Si por algún error no carga, usa el texto normal.
+            const textoLargo = typeof traducirMensajeParaPaciente === 'function' 
+                ? traducirMensajeParaPaciente(item) 
+                : item.customMsg;
 
-    html += `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">`;
-    
-    for (const [nombreGrupo, items] of Object.entries(grupos)) {
-        if (items.length > 0) {
-            let borderColor = 'border-blue-200'; let bgColor = 'bg-blue-50'; let titleColor = 'text-blue-800';
-            if(nombreGrupo.includes('Cardiovascular')) { borderColor = 'border-green-200'; bgColor = 'bg-green-50'; titleColor = 'text-green-800'; }
-            if(nombreGrupo.includes('Hábitos')) { borderColor = 'border-indigo-200'; bgColor = 'bg-indigo-50'; titleColor = 'text-indigo-800'; }
-            if(nombreGrupo.includes('Oncológica')) { borderColor = 'border-purple-200'; bgColor = 'bg-purple-50'; titleColor = 'text-purple-800'; }
-            
+            // Diferenciamos visualmente si es una patología o solo un estudio pendiente
+            const esPendiente = item.estado && item.estado.toUpperCase().includes('PENDIENTE');
+            const iconoItem = esPendiente ? 'fa-clock text-red-500' : 'fa-notes-medical text-red-700';
+
             html += `
-                <div class="${bgColor} border ${borderColor} p-6 rounded-xl shadow-sm">
-                    <h3 class="font-bold ${titleColor} mb-4 text-lg border-b pb-2 ${borderColor}">${nombreGrupo}</h3>
-                    <ul class="space-y-3">
+                <div class="bg-white p-4 rounded border border-red-200 shadow-sm">
+                    <h4 class="font-bold text-red-700 text-lg mb-1"><i class="fas ${iconoItem} mr-2"></i>${item.indicador}</h4>
+                    <p class="text-gray-800">${textoLargo}</p>
+                </div>
             `;
-            
-            items.forEach(item => {
-                let colorClase = 'text-gray-700';
-                let icon = '•';
-                if (item.color === 'red') { colorClase = 'text-red-600 font-bold'; icon = '⚠️'; }
-                if (item.color === 'yellow') { colorClase = 'text-yellow-700 font-semibold'; icon = '⏳'; }
-
-                html += `
-                    <li class="text-sm leading-tight">
-                        <span class="font-bold text-gray-900 mr-1">${icon} ${item.indicador}:</span>
-                        <span class="${colorClase}">${item.customMsg}</span>
-                    </li>
-                `;
-            });
-            
-            html += `</ul></div>`;
-        }
+        });
+        html += `</div></div>`;
     }
-    html += `</div>`; 
+
+    // CAJA AMARILLA
+    if (amarillos.length > 0) {
+        html += `
+        <div class="bg-yellow-50 border-l-8 border-yellow-500 p-6 rounded-lg mb-8 shadow-md">
+            <div class="flex items-center mb-4">
+                <i class="fas fa-exclamation-triangle text-yellow-600 text-3xl mr-3"></i>
+                <h3 class="text-2xl font-bold text-yellow-800">Para ocuparse! no te dejes estar</h3>
+            </div>
+            <p class="text-yellow-700 font-medium mb-5 text-lg">
+                Estos indicadores no representan una emergencia ahora, pero es importante que te ocupes de ellos a mediano plazo:
+            </p>
+            <div class="space-y-4">
+        `;
+        
+        amarillos.forEach(item => {
+            const textoLargo = typeof traducirMensajeParaPaciente === 'function' 
+                ? traducirMensajeParaPaciente(item) 
+                : item.customMsg;
+
+            html += `
+                <div class="bg-white p-4 rounded border border-yellow-200 shadow-sm">
+                    <h4 class="font-bold text-yellow-700 text-lg mb-1">${item.indicador}</h4>
+                    <p class="text-gray-800">${textoLargo}</p>
+                </div>
+            `;
+        });
+        html += `</div></div>`;
+    }
+
+    // CAJA VERDE
+    if (verdes.length > 0) {
+        const nombresVerdes = verdes.map(v => v.indicador).join(', ');
+        html += `
+        <div class="bg-green-50 border-l-8 border-green-500 p-6 rounded-lg mb-8 shadow-md">
+            <div class="flex items-center mb-4">
+                <i class="fas fa-check-circle text-green-600 text-3xl mr-3"></i>
+                <h3 class="text-2xl font-bold text-green-800">¡A seguir cuidándose así!</h3>
+            </div>
+            <p class="text-green-800 font-medium mb-3 text-lg">
+                ¡Queremos felicitarte! En este chequeo hemos evaluado <strong>${verdes.length} variables</strong> y los resultados indican parámetros normales o hábitos saludables. 
+            </p>
+            <p class="text-green-700 text-sm italic mb-4">
+                (Entre ellos: ${nombresVerdes}).
+            </p>
+            <p class="text-green-900 font-bold bg-green-200 p-3 rounded text-center">
+                Te animamos a que sigas manteniendo este compromiso con tu salud. ¡Nos vemos en tu próximo control anual!
+            </p>
+        </div>
+        `;
+    }
+
+    if (rojos.length === 0 && amarillos.length === 0 && verdes.length === 0) {
+        html += `
+        <div class="bg-gray-100 border-l-8 border-gray-400 p-6 rounded-lg mb-8 shadow-md text-center">
+            <p class="text-gray-600 font-medium text-lg">
+                No tenemos suficientes datos clínicos cargados en tu Día Preventivo para generar una conclusión.
+            </p>
+        </div>`;
+    }
 
     return html;
 }
