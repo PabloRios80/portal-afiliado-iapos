@@ -1262,51 +1262,6 @@ if (botonBuscarOtro) {
 // 🧠 MOTOR DE SÍNTESIS CLÍNICA LOCAL (SISTEMA DE TRIAGE + BIBLIOTECA)
 // ==============================================================================
 
-// 📚 LA BIBLIOTECA CLÍNICA: Aquí puedes agregar todos los mensajes personalizados que quieras
-function obtenerMensajeBiblioteca(indicador, mensajeBase, color) {
-    const ind = indicador.toUpperCase();
-    
-    // --- EXPLICACIONES PARA RESULTADOS ROJOS Y AMARILLOS ---
-    if (ind.includes('PRESION') || ind.includes('ARTERIAL')) {
-        return "Tus valores de presión arterial están elevados. Esto puede ser un signo de hipertensión, una condición silenciosa que hace trabajar de más a tu corazón y daña las arterias a largo plazo. Te sugerimos realizar un control seriado de presión.";
-    }
-    if (ind.includes('DIABETES') || ind.includes('GLUCEMIA')) {
-        return "Detectamos alteraciones en tus niveles de azúcar en sangre. La diabetes o prediabetes no tratada afecta muchos órganos del cuerpo. Es fundamental iniciar cambios en la dieta y consultar para posible medicación.";
-    }
-    if (ind.includes('COLESTEROL') || ind.includes('LIPID')) {
-        return "Tus niveles de grasas (colesterol/triglicéridos) en sangre requieren atención. Esto favorece la formación de placas en las arterias, aumentando el riesgo de problemas cardíacos.";
-    }
-    if (ind.includes('TABACO') || ind.includes('FUMA')) {
-        return "Notamos que tienes el hábito de fumar. El tabaquismo es el principal factor de riesgo evitable para múltiples enfermedades respiratorias y cardiovasculares. ¡Nunca es tarde para dejarlo! IAPOS puede ayudarte.";
-    }
-    if (ind.includes('SOMF') || ind.includes('COLON')) {
-        return "El rastreo de cáncer de colon requiere tu atención urgente. Detectar a tiempo pequeñas lesiones (pólipos) a través de una videocolonoscopia salva vidas de manera efectiva.";
-    }
-    if (ind.includes('MAMOGRAFIA') || ind.includes('MAMA')) {
-        return "Tus estudios mamarios presentan hallazgos que tu ginecólogo/a debe revisar. En la gran mayoría de los casos son situaciones tratables si se atienden a la brevedad.";
-    }
-    if (ind.includes('PAP') || ind.includes('HPV')) {
-        return "Los estudios de prevención ginecológica mostraron alteraciones. Es muy importante que no dejes pasar el tiempo y asistas a una consulta especializada para un seguimiento seguro.";
-    }
-    if (ind.includes('DEPRESION') || ind.includes('MENTAL')) {
-        return "El tamizaje detectó signos de que tu estado de ánimo no está en su mejor momento. La salud mental es igual de prioritaria que la física. Te animamos a buscar contención profesional.";
-    }
-    if (ind.includes('IMC') || ind.includes('PESO') || ind.includes('OBESIDAD')) {
-        return "Tu relación de peso y altura indica un riesgo metabólico. Un abordaje nutricional y sumar movimiento a tu rutina diaria son los primeros pasos para revertirlo.";
-    }
-    if (ind.includes('VIH') || ind.includes('SIFILIS') || ind.includes('CHAGAS')) {
-        return "El laboratorio detectó un resultado en tus pruebas infecciosas que requiere confirmación y tratamiento con un especialista. Existen tratamientos altamente efectivos hoy en día.";
-    }
-    if (ind.includes('AGUDEZA') || ind.includes('VISUAL')) {
-        return "Tu visión presenta algunas alteraciones. Te sugerimos agendar una visita oftalmológica para evitar forzar la vista y corregir el problema tempranamente.";
-    }
-
-    // Si no está en la biblioteca, devuelve el mensaje original que calculó la regla
-    return mensajeBase; 
-}
-// ==============================================================================
-// 🧠 MOTOR DE SÍNTESIS CLÍNICA (USANDO LA BIBLIOTECA EXTERNA)
-// ==============================================================================
 function generarResumenMedicoLocal(persona, resultadosEvaluados) {
     const nombreCompleto = persona['apellido y nombre'] || persona['Nombre'] || 'Paciente';
     
