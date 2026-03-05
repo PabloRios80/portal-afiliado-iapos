@@ -75,6 +75,90 @@ app.get('/oauth2callback', async (req, res) => {
     res.send('<h1>Conectado</h1>');
 });
 
+// ======================================================================
+// 🧠 SISTEMA DE CACHÉ EN MEMORIA (CARGA 20.000+ REGISTROS)
+// ======================================================================
+let cachePacientes = []; // Aquí vivirá tu base de datos en RAM
+let cacheInformes = [];  // Aquí vivirán los informes
+let ultimaSincronizacion = null;
+let estaSincronizando = false;
+
+// Sacamos esta función afuera para poder usarla al sincronizar
+function procesarFecha(googleDateString) {
+    if (!googleDateString) return { fechaObjeto: new Date(0), fechaTexto: "" };
+    const match = googleDateString.match(/Date\((\d+),(\d+),(\d+)\)/);
+    if (match) {
+        const anio = parseInt(match[1]);
+        const mes = parseInt(match[2]); 
+        const dia = parseInt(match[3]);
+        const fechaObj = new Date(anio, mes, dia);
+        const mesHumano = (mes + 1).toString().padStart(2, '0');
+        const diaHumano = dia.toString().padStart(2, '0');
+        return { fechaObjeto: fechaObj, fechaTexto: `${diaHumano}/${mesHumano}/${anio}` };
+    }
+    return { fechaObjeto: new Date(0), fechaTexto: googleDateString };
+}
+
+// ESTA FUNCIÓN VIAJA A GOOGLE Y SE APRENDE EL EXCEL DE MEMORIA
+async function sincronizarBaseDeDatos() {
+    if (estaSincronizando) return;
+    estaSincronizando = true;
+    console.log("🔄 Iniciando descarga masiva de la base de datos a memoria...");
+
+    try {
+        const accessToken = (await oauth2Client.getAccessToken()).token;
+        const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+        // 1. Bajar TODO 'Integrado' (sin el "where C = ...")
+        const resMed = await axios.get(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Integrado`, { 
+            headers: { Authorization: `Bearer ${accessToken}` } 
+        });
+        const jsonMed = JSON.parse(resMed.data.replace(/.*setResponse\((.*)\);/s, '$1'));
+
+        const todosLosPacientes = [];
+        if (jsonMed.table && jsonMed.table.rows) {
+            jsonMed.table.rows.forEach(row => {
+                const d = {}; 
+                let fechaParaOrdenar = new Date(0);
+                
+                // Extraemos el DNI de la columna C (índice 2)
+                let dniBuscable = row.c[2]?.v?.toString().replace(/'/g, "").trim() || "";
+
+                jsonMed.table.cols.forEach((c, i) => { 
+                    if (c && c.label) {
+                        let valor = row.c[i]?.v || '';
+                        if (c.label === 'FECHAX' || (typeof valor === 'string' && valor.startsWith('Date('))) {
+                            const procesado = procesarFecha(valor);
+                            d[c.label] = procesado.fechaTexto;
+                            if (c.label === 'FECHAX') fechaParaOrdenar = procesado.fechaObjeto;
+                        } else {
+                            d[c.label] = valor;
+                        }
+                    } 
+                });
+                d['_dniBuscable'] = dniBuscable;
+                d['_fechaOrden'] = fechaParaOrdenar;
+                todosLosPacientes.push(d);
+            });
+        }
+        cachePacientes = todosLosPacientes;
+
+        // 2. Bajar TODO 'Informes IA'
+        const resInformes = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: "'Informes IA'!A:C" 
+        });
+        cacheInformes = resInformes.data.values || [];
+
+        ultimaSincronizacion = new Date();
+        console.log(`✅ Base de datos lista en memoria. Total de registros: ${cachePacientes.length}`);
+    } catch (error) {
+        console.error("❌ Error al sincronizar la base de datos:", error.message);
+    } finally {
+        estaSincronizando = false;
+    }
+}
+
 // --- Rutas Login y Datos ---
 app.post('/api/auth/login', async (req, res) => {
     try {
@@ -90,98 +174,41 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Error Login' }); }
 });
 // ======================================================================
-// 🔍 BUSCAR DATOS (CON ORDEN CRONOLÓGICO Y FECHAS ARREGLADAS)
+// 🚀 BUSCAR DATOS (VERSIÓN ULTRARRÁPIDA CON CACHÉ)
 // ======================================================================
 app.post('/api/buscar-datos', async (req, res) => {
     try {
         const { dniBuscado } = req.body;
-        const accessToken = (await oauth2Client.getAccessToken()).token;
-        const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+        const dniStr = dniBuscado.toString().trim();
 
-        // 1. Datos médicos (Hoja Integrado)
-        const resMed = await axios.get(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=Integrado&tq=${encodeURIComponent(`select * where C = '${dniBuscado}'`)}`, { headers: { Authorization: `Bearer ${accessToken}` } });
-        
-        // Limpiamos el JSON de Google
-        const jsonMed = JSON.parse(resMed.data.replace(/.*setResponse\((.*)\);/s, '$1'));
-
-        if (!jsonMed.table?.rows.length) return res.status(404).json({ error: 'No hay datos' });
-
-        // 2. Informes IA (API Oficial)
-        const resInformes = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: "'Informes IA'!A:C" 
-        });
-
-        const filasInformes = resInformes.data.values || [];
-        
-        // Buscamos ignorando la comilla '
-        const filaEncontrada = filasInformes.find(fila => {
-            const dniExcel = fila[0]?.toString().replace("'", "").trim();
-            return dniExcel == dniBuscado.toString().trim();
-        });
-
-        const reporte = filaEncontrada ? filaEncontrada[2] : null;
-
-        // --- FUNCIÓN HELPER PARA ARREGLAR FECHAS ---
-        function procesarFecha(googleDateString) {
-            if (!googleDateString) return { fechaObjeto: new Date(0), fechaTexto: "" };
-            
-            // El formato viene como "Date(2023,9,5)" -> Año, Mes(0-11), Día
-            const match = googleDateString.match(/Date\((\d+),(\d+),(\d+)\)/);
-            
-            if (match) {
-                const anio = parseInt(match[1]);
-                const mes = parseInt(match[2]); // OJO: Google usa meses 0-11
-                const dia = parseInt(match[3]);
-                
-                // Creamos fecha real para ordenar (Mes va tal cual para JS)
-                const fechaObj = new Date(anio, mes, dia);
-                
-                // Creamos texto bonito (Aquí SUMAMOS 1 al mes para humanos)
-                const mesHumano = (mes + 1).toString().padStart(2, '0');
-                const diaHumano = dia.toString().padStart(2, '0');
-                const fechaTxt = `${diaHumano}/${mesHumano}/${anio}`;
-                
-                return { fechaObjeto: fechaObj, fechaTexto: fechaTxt };
-            }
-            // Si no es formato Date(...), devolvemos tal cual
-            return { fechaObjeto: new Date(0), fechaTexto: googleDateString };
+        if (cachePacientes.length === 0) {
+            return res.status(503).json({ error: 'Servidor iniciando. Aguarde unos segundos y vuelva a intentar.' });
         }
 
-        // 3. Procesamos y Ordenamos
-        let reports = jsonMed.table.rows.map(row => {
-            const d = {}; 
-            let fechaParaOrdenar = new Date(0); // Fecha por defecto antigua
+        // 1. Buscamos en RAM (Tarda 0.001 segundos)
+        const registrosPaciente = cachePacientes.filter(p => p['_dniBuscable'] === dniStr);
 
-            jsonMed.table.cols.forEach((c, i) => { 
-                if(c.label) {
-                    let valor = row.c[i]?.v || '';
-                    
-                    // Si la columna es FECHAX (o parece una fecha de Google)
-                    if (c.label === 'FECHAX' || (typeof valor === 'string' && valor.startsWith('Date('))) {
-                        const procesado = procesarFecha(valor);
-                        d[c.label] = procesado.fechaTexto; // Guardamos el texto bonito (5/10/23)
-                        
-                        // Si es la columna clave de fecha, guardamos el objeto para ordenar después
-                        if (c.label === 'FECHAX') {
-                            fechaParaOrdenar = procesado.fechaObjeto;
-                        }
-                    } else {
-                        d[c.label] = valor;
-                    }
-                } 
-            });
-            
-            d['REPORTE_MEDICO'] = reporte;
-            d['_fechaOrden'] = fechaParaOrdenar; // Campo oculto temporal para ordenar
-            return d;
+        if (registrosPaciente.length === 0) {
+            return res.status(404).json({ error: 'No hay datos' });
+        }
+
+        // 2. Buscamos el informe
+        const filaEncontrada = cacheInformes.find(fila => {
+            const dniExcel = fila[0]?.toString().replace("'", "").trim();
+            return dniExcel === dniStr;
+        });
+        const reporte = filaEncontrada ? filaEncontrada[2] : null;
+
+        // 3. Empaquetamos y ordenamos
+        let reports = registrosPaciente.map(p => {
+            const copia = { ...p }; // Clonamos para no editar la memoria
+            copia['REPORTE_MEDICO'] = reporte;
+            return copia;
         });
 
-        // 4. ORDENAR: El más nuevo primero (Descendente)
         reports.sort((a, b) => b._fechaOrden - a._fechaOrden);
-
-        // (Opcional) Limpiamos el campo temporal _fechaOrden antes de enviar
-        reports.forEach(r => delete r._fechaOrden);
+        reports.forEach(r => delete r._fechaOrden); // Limpiamos campos ocultos
+        reports.forEach(r => delete r._dniBuscable);
 
         res.json({ reports });
 
@@ -189,6 +216,24 @@ app.post('/api/buscar-datos', async (req, res) => {
         console.error("Error al buscar datos:", e);
         res.status(500).json({ error: 'Error Datos' }); 
     }
+});
+
+// ======================================================================
+// 🔄 RUTA MANUAL DE SINCRONIZACIÓN (BOTÓN DE PÁNICO)
+// ======================================================================
+app.post('/api/admin/sincronizar', async (req, res) => {
+    if (estaSincronizando) {
+        return res.status(429).json({ error: 'Ya hay una sincronización en curso. Aguarde un momento.' });
+    }
+    
+    // Forzamos la descarga
+    await sincronizarBaseDeDatos();
+    
+    res.json({ 
+        success: true, 
+        totalRegistros: cachePacientes.length,
+        ultimaSincronizacion: ultimaSincronizacion
+    });
 });
 
 // --- Guardar Reporte ---
@@ -531,9 +576,22 @@ app.post('/api/admin/crear-usuario-rapido', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 // START
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-async function start() { await loadTokens(); app.listen(PORT, () => console.log(`🚀 Servidor listo: http://localhost:${PORT}`)); }
+
+async function start() { 
+    // 1. Primero cargamos las llaves de Google
+    await loadTokens(); 
+    
+    // 2. Prendemos el servidor
+    app.listen(PORT, () => console.log(`🚀 Servidor listo: http://localhost:${PORT}`)); 
+    
+    // 3. AHORA SÍ: Como ya tenemos las llaves, descargamos la base de datos a la RAM
+    sincronizarBaseDeDatos();
+    
+    // 4. Lo programamos para que se repita cada 24 horas
+    setInterval(sincronizarBaseDeDatos, 24 * 60 * 60 * 1000); 
+}
+
 start();

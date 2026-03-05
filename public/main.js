@@ -5,7 +5,7 @@ const esEntornoLocal = window.location.hostname === 'localhost' || window.locati
 
 // 2. Elegimos la URL correcta automáticamente
 const ESTUDIOS_API_URL = esEntornoLocal 
-    ? 'http://localhost:4000'                          // 🏠 Si estás en tu casa
+    ? 'http://localhost:4000'                  // 🏠 Si estás en tu casa
     : 'https://estudios-complementarios-dp.onrender.com'; // ☁️ Si estás en la nube
 const API_BASE_PATH = '/api';
 
@@ -76,6 +76,7 @@ if (btnReg) {
         }
     });
 }
+
 // ==============================================================================
 // LÓGICA DE LOGIN
 // ==============================================================================
@@ -136,110 +137,207 @@ if (btnLogin) {
         }
     });
 }
-
 // ==============================================================================
-// FUNCIÓN PRINCIPAL DE CARGA (SEGURA CON TOKEN)
+// 1. FUNCIÓN PRINCIPAL DE CARGA (VELOCIDAD MÁXIMA + CARGA PROGRESIVA)
 // ==============================================================================
 async function iniciarPortal(dniParaBuscar) {
     Swal.fire({
         title: 'Ingresando...',
-        text: 'Autenticando y recuperando historial médico...',
+        text: 'Recuperando historial médico...',
         allowOutsideClick: false,
         didOpen: () => Swal.showLoading()
     });
 
     try {
         if (!currentUser) currentUser = JSON.parse(localStorage.getItem('iapos_user'));
-        if (!currentUser) throw new Error('No se identificó la sesión. Por favor ingresa de nuevo.');
+        if (!currentUser) throw new Error('No se identificó la sesión.');
 
         const response = await fetch('/api/buscar-datos', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${authToken}` 
-            },
-            body: JSON.stringify({ 
-                dniBuscado: dniParaBuscar,      
-                usuarioSolicitante: currentUser 
-            })
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+            body: JSON.stringify({ dniBuscado: dniParaBuscar, usuarioSolicitante: currentUser })
         });
 
         const dataResult = await response.json();
-        
         if (!response.ok) {
-            if (response.status === 401 || response.status === 403) {
-                localStorage.removeItem('iapos_token');
-                Swal.fire('Atención', dataResult.error || 'Sesión expirada.', 'warning');
-                return;
-            }
+            if (response.status === 401 || response.status === 403) localStorage.removeItem('iapos_token');
             throw new Error(dataResult.error || 'Error al buscar datos.');
         }
 
         let reports = dataResult.reports;
         if (!reports || reports.length === 0) {
             if (dataResult.persona) reports = [dataResult.persona];
-            else { 
-                Swal.fire('Sin Datos', 'No hay registros para este DNI.', 'info'); 
-                return; 
-            }
+            else return Swal.fire('Sin Datos', 'No hay registros para este DNI.', 'info'); 
         }
 
-        // --- AQUÍ ESTÁ LA MEJORA DE FECHAS ---
-        // Guardamos todo el historial ordenado
-        const sortedReports = [...reports]; // Asumimos que el server ya los manda ordenados
-        allReports = sortedReports; 
+        allReports = [...reports]; 
+        const selectedReport = allReports[0]; 
+        const dniToSearch = selectedReport.DNI || selectedReport.dni || dniParaBuscar;
+
+        // 1. Carga de reporte local
+        const resumenAI = await obtenerResumenAI(selectedReport);
         
-        // Seleccionamos el más reciente para empezar
-        const selectedReport = sortedReports[0]; 
-        const dniToSearch = selectedReport.DNI;
-
-        // Carga de estudios
-        const [
-            resumenAI, labResult, mamografiaResult, ecografiaResult, ecomamariaResult,
-            espirometriaResult, enfermeriaResult, densitometriaResult,
-            vccResult, oftalmologiaResult, odontologiaResult, biopsiaResult
-        ] = await Promise.all([
-            obtenerResumenAI(selectedReport),
-            obtenerLinkEstudios(dniToSearch, 'laboratorio'),
-            obtenerLinkEstudios(dniToSearch, 'mamografia'),
-            obtenerLinkEstudios(dniToSearch, 'ecografia'),
-            obtenerLinkEstudios(dniToSearch, 'ecomamaria'),
-            obtenerLinkEstudios(dniToSearch, 'espirometria'),
-            obtenerLinkEstudios(dniToSearch, 'enfermeria'),
-            obtenerLinkEstudios(dniToSearch, 'densitometria'),
-            obtenerLinkEstudios(dniToSearch, 'vcc'),
-            obtenerLinkEstudios(dniToSearch, 'oftalmologia'),
-            obtenerLinkEstudios(dniToSearch, 'odontologia'),
-            obtenerLinkEstudios(dniToSearch, 'biopsia')
-        ]);
-
-        cachedEstudiosResults = {
-            laboratorio: labResult, mamografia: mamografiaResult, ecografia: ecografiaResult,
-            ecomamaria: ecomamariaResult, espirometria: espirometriaResult, enfermeria: enfermeriaResult,
-            densitometria: densitometriaResult, vcc: vccResult, oftalmologia: oftalmologiaResult,
-            odontologia: odontologiaResult, biopsia: biopsiaResult
-        };
-
+        // 2. Limpiamos la memoria de estudios anteriores
+        cachedEstudiosResults = {};
+        
+        // 3. Dibujamos la pantalla INMEDIATAMENTE
         cargarPortalPersonal(selectedReport, resumenAI);
         
+        // 4. Ocultar paneles de búsqueda
         const vistaInicial = document.getElementById('vista-inicial');
         if(vistaInicial) vistaInicial.style.display = 'none';
-
         const searchContainer = document.getElementById('search-container');
         if (searchContainer) searchContainer.style.display = 'none';
-
         if (currentUser && currentUser.rol === 'admin') {
             const btnNueva = document.getElementById('btn-nueva-busqueda');
             if (btnNueva) btnNueva.style.display = 'block';
         }
 
-        Swal.close();
+        Swal.close(); // El usuario ya puede operar
+
+        // 5. BUSCAMOS LOS PDFs UNO POR UNO (Los 404 son normales aquí)
+        const estudiosList = ['laboratorio', 'mamografia', 'ecografia', 'ecomamaria', 'espirometria', 'enfermeria', 'densitometria', 'vcc', 'oftalmologia', 'odontologia', 'biopsia'];
+        
+        estudiosList.forEach(tipo => {
+            obtenerLinkEstudios(dniToSearch, tipo).then(res => {
+                cachedEstudiosResults[tipo] = res;
+                cargarEstudiosTab(cachedEstudiosResults); // Actualiza la grilla al instante
+            }).catch(e => console.log("Búsqueda finalizada sin PDF en:", tipo));
+        });
 
     } catch (error) {
         console.error(error);
         Swal.fire('Error', error.message, 'error');
     }
 }
+
+// ==============================================================================
+// 2. FUNCIONES DEL PORTAL PERSONAL (BLINDADO CONTRA ERRORES)
+// ==============================================================================
+function cargarPortalPersonal(persona, resumenAI) {
+    document.getElementById('vista-inicial').style.display = 'none';
+    document.getElementById('portal-salud-container').style.display = 'block';
+
+    reporteSeleccionado = persona;
+    
+    // Extracción segura del sexo
+    window.pacienteSexo = String(persona['Sexo'] || persona['sexo'] || '').toLowerCase().trim();
+    if (window.pacienteSexo.includes('masc') || window.pacienteSexo.includes('varon') || window.pacienteSexo === 'm') window.pacienteSexo = 'masculino';
+    if (window.pacienteSexo.includes('fem') || window.pacienteSexo.includes('mujer') || window.pacienteSexo === 'f') window.pacienteSexo = 'femenino';
+
+    // 1. CONFIGURAMOS LAS PESTAÑAS PRIMERO (Asegura que siempre funcionen)
+    const navContenedor = document.getElementById('portal-navegacion');
+    if (navContenedor) {
+        navContenedor.innerHTML = `
+            <button id="btn-tab-dia-preventivo" class="tab-btn active bg-blue-600 text-white font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
+                <i class="fas fa-heartbeat mr-2"></i> Día Preventivo
+            </button>
+            <button id="btn-tab-estudios" class="tab-btn text-gray-700 hover:bg-gray-100 font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
+                <i class="fas fa-x-ray mr-2"></i> Estudios Complementarios
+            </button>
+            <button id="btn-tab-servicios" class="tab-btn text-gray-700 hover:bg-gray-100 font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
+                <i class="fas fa-headset mr-2"></i> Otros Servicios
+            </button>
+        `;
+
+        document.querySelectorAll('.tab-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const targetId = button.id.replace('btn-tab-', 'tab-');
+                mostrarPestana(targetId);
+            });
+        });
+    }
+
+    // 2. CARGAMOS EL CONTENIDO EN BLOQUES SEGUROS
+    try {
+        cargarDiaPreventivoTab(persona, resumenAI); 
+        cargarEstudiosTab(cachedEstudiosResults);
+    } catch(e) {
+        console.error("Error renderizando contenido:", e);
+    }
+
+    mostrarPestana('tab-dia-preventivo');
+    window.scrollTo(0, 0);
+}
+
+// ==============================================================================
+// 3. DISEÑO ORIGINAL DE ESTUDIOS COMPLEMENTARIOS
+// ==============================================================================
+function cargarEstudiosTab(estudiosResults) {
+    const contenedor = document.getElementById('estudios-complementarios-lista');
+    if (!contenedor) return;
+    
+    estudiosResults = estudiosResults || {};
+    const sexo = window.pacienteSexo || '';
+    
+    const estudiosMaestros = [
+        { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', key: 'laboratorio' },
+        { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia', soloMujeres: true },
+        { nombre: 'Ecografía', icon: 'fas fa-ultrasound', key: 'ecografia' },
+        { nombre: 'Espirometría', icon: 'fas fa-lungs', key: 'espirometria' },
+        { nombre: 'Enfermería', icon: 'fas fa-user-nurse', key: 'enfermeria' },
+        { nombre: 'Densitometría', icon: 'fas fa-bone', key: 'densitometria' },
+        { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', key: 'vcc' },
+        { nombre: 'Eco mamaria', icon: 'fas fa-ultrasound', key: 'ecomamaria', soloMujeres: true },
+        { nombre: 'Odontología', icon: 'fas fa-tooth', key: 'odontologia' }, 
+        { nombre: 'Biopsia', icon: 'fas fa-microscope', key: 'biopsia' }, 
+        { nombre: 'Oftalmología', icon: 'fas fa-eye', key: 'oftalmologia' },
+        { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', key: 'otros' },
+    ];
+
+    let html = '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">';
+    window._cachedEnfermeriaData = null;
+
+    estudiosMaestros.forEach(estudio => {
+        if (sexo === 'masculino' && estudio.soloMujeres) return; 
+
+        const result = estudiosResults[estudio.key];
+        const isAvailable = result && (result.link || result.datos);
+        
+        let clickAction = '';
+        if (isAvailable) {
+            if (estudio.key === 'enfermeria') {
+                window._cachedEnfermeriaData = result.datos;
+                clickAction = `onclick="abrirModalEnfermeria(window._cachedEnfermeriaData); return false;"`;
+            } else {
+                clickAction = `onclick="window.open('${result.link}', '_blank')"`;
+            }
+        }
+
+        const lastResultDate = result && result.fechaResultado ? result.fechaResultado : null;
+        const subtitleHtml = lastResultDate
+            ? `<p class="text-xs text-gray-500 mt-1">Última fecha: <span class="font-medium text-green-700">${lastResultDate}</span></p>`
+            : `<p class="text-xs text-gray-400 mt-1"></p>`;
+
+        const linkClasses = isAvailable 
+            ? 'border-green-500 hover:border-green-700 bg-green-50 hover:bg-green-100 cursor-pointer'
+            : 'border-gray-300 opacity-60 bg-gray-50 cursor-default'; 
+        
+        const iconClasses = isAvailable ? 'text-green-600' : 'text-gray-400';
+
+        const onClickHandler = isAvailable 
+            ? clickAction 
+            : `onclick="Swal.fire('Pendiente', 'Este estudio no registra resultados en el servidor.', 'info')"`;
+
+        html += `
+            <div ${onClickHandler} class="flex items-center p-4 rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 ${linkClasses}">
+                <i class="${estudio.icon} ${iconClasses} text-2xl mr-4"></i>
+                <div class="flex-grow">
+                    <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
+                    ${subtitleHtml} 
+                </div>
+                <span class="ml-auto text-sm font-medium text-right ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-500'}">
+                    ${isAvailable ? 'VER RESULTADO' : 'PENDIENTE'}
+                </span>
+                <i class="fas fa-chevron-right ml-2 ${isAvailable ? 'text-green-500' : 'text-gray-300'}"></i>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    contenedor.innerHTML = html;
+}
+
 
 document.addEventListener('DOMContentLoaded', () => {
     if (authToken && currentUser) {
@@ -248,13 +346,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==============================================================================
-// 2. FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO (TU LÓGICA ORIGINAL)
+// FUNCIONES DE CONEXIÓN Y LÓGICA DE RIESGO
 // ==============================================================================
 async function obtenerResumenAI(persona) {
     const textoGuardado = persona['REPORTE_MEDICO']; 
-    if (textoGuardado && textoGuardado.trim().length > 10) {
-        return textoGuardado;
-    }
+    if (textoGuardado && textoGuardado.trim().length > 10) return textoGuardado;
     return null; 
 }
 
@@ -274,16 +370,16 @@ async function obtenerLinkEstudios(dni, studyType) {
                 fechaResultado: data.fechaResultado || (data.datos ? data.datos.fecha : null) || null 
             };
         } else {
-            throw new Error(data.error || `Error del microservicio (${response.status})`);
+            throw new Error(data.error || `Error microservicio (${response.status})`);
         }
     } catch (error) {
         return { link: null, error: `Servicio no disponible.`, tipo: studyType, fechaResultado: null };
     }
 }
+
 // ==============================================================================
-// 🔴 LÓGICA DE RIESGO (CORREGIDA: PRIORIDAD A RESULTADOS NEGATIVOS/VERDES)
+// 🔴 LÓGICA DE RIESGO 
 // ==============================================================================
-// CORRECTO (Agregamos allData)
 function getRiskLevel(key, value, edad, sexo, allData = {}) {
     const v = String(value || '').toLowerCase().trim();
     const k = key.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
@@ -292,349 +388,172 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
                         v.includes('no corresponde') || v === '' || v.includes('no indicado') || 
                         v.includes('no aplica') || v.includes('pendiente');
 
-    // --- DATOS PERSONALES (VIOLETA) ---
     if (k === 'EDAD' || k === 'SEXO') {
         return { color: 'violet', icon: 'info', text: 'Dato Personal', customMsg: 'Información registrada en el sistema.' };
     }
-// =====================================================================
-    // 🫁 LÓGICA CRUZADA: EPOC Y TABACO
-    // =====================================================================
+
     if (k.includes('EPOC')) {
         const claveTabaco = Object.keys(allData).find(x => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().includes('TABACO'));
         const valorTabaco = claveTabaco ? String(allData[claveTabaco]).toLowerCase().trim() : '';
         const noFuma = valorTabaco.includes('no fuma') || valorTabaco.includes('nunca') || valorTabaco.includes('ex') || valorTabaco === 'no';
         const esFumador = (valorTabaco.includes('fuma') && !noFuma) || valorTabaco === 'si';
 
-        // ORDEN CLAVE: Primero buscamos lo negativo, luego lo positivo
         if (v.includes('no se verifica')) {
-            if (esFumador) {
-                return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'No se verifica EPOC. Recomendación IMPERIOSA: Dejar de fumar para evitar desarrollarlo.' };
-            } else {
-                return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Sin hallazgos patológicos.' };
-            }
+            if (esFumador) return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'No se verifica EPOC. Recomendación IMPERIOSA: Dejar de fumar.' };
+            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Sin hallazgos patológicos.' };
         } 
-        else if (v.includes('se verifica')) {
-            return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'EPOC Verificado. Se recomienda buscar ayuda médica para tratamiento.' };
-        } 
+        else if (v.includes('se verifica')) return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'EPOC Verificado. Se recomienda buscar ayuda médica.' };
         else {
-            // Si dice "No se realiza" o está vacío
-            if (esFumador) {
-                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Al ser fumador, es fundamental realizar una espirometría de control.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'No Requerido', customMsg: 'Paciente no fumador. La espirometría de tamizaje no es estrictamente necesaria.' };
-            }
+            if (esFumador) return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Al ser fumador, es fundamental realizar una espirometría.' };
+            return { color: 'gray', icon: 'info', text: 'No Requerido', customMsg: 'Paciente no fumador. La espirometría no es estrictamente necesaria.' };
         }
     }
-    // =====================================================================
-    // 🫀 LÓGICA: ANEURISMA DE AORTA (Con filtro de edad)
-    // =====================================================================
+
     if (k.includes('ANEURISMA') || k.includes('AORTA')) {
-        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) {
-            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Aorta abdominal sin alteraciones.' };
-        } 
-        else if (v.includes('se verifica') || v.includes('detectad') || v.includes('positivo')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
-        } 
+        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Aorta abdominal sin alteraciones.' };
+        else if (v.includes('se verifica') || v.includes('detectad') || v.includes('positivo')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
         else if (noRealizado) {
-            // Filtro de edad: Generalmente se busca en mayores de 65
-            if (edad >= 65) {
-                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Ecografía de aorta recomendada por edad.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio no indicado para su rango de edad (menor a 65).' };
-            }
+            if (edad >= 65) return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Ecografía de aorta recomendada por edad.' };
+            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio no indicado para su rango de edad (menor a 65).' };
         }
     }
-    // =====================================================================
-    // 🦴 LÓGICA: OSTEOPOROSIS / DENSITOMETRÍA (Con filtro de edad)
-    // =====================================================================
+
     if (k.includes('OSTEOPOROSIS') || k.includes('DENSITOMETRIA')) {
-        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) {
-            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Densidad ósea dentro de parámetros normales.' };
-        } 
-        else if (v.includes('se verifica') || v.includes('osteopenia') || v.includes('osteoporosis')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Densidad ósea reducida. Importante prevenir caídas y consultar tratamiento.' };
-        } 
+        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Densidad ósea normal.' };
+        else if (v.includes('se verifica') || v.includes('osteopenia') || v.includes('osteoporosis')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Densidad ósea reducida. Importante prevenir caídas.' };
         else if (noRealizado) {
-            // Filtro de edad: Generalmente se indica a partir de los 65 años
-            if (edad >= 65) {
-                return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Densitometría ósea recomendada a partir de los 65 años.' };
-            } else {
-                return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio indicado generalmente a partir de los 65 años.' };
-            }
+            if (edad >= 65) return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Densitometría ósea recomendada a partir de los 65 años.' };
+            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio indicado a partir de los 65 años.' };
         }
     }
-    // =====================================================================
-    // 🧠 LÓGICA CRUZADA: PAP / HPV (La "Inteligencia Médica" Nueva)
-    // =====================================================================
+
     if (k.includes('PAP') || k.includes('PAPA')) {
-        // 1. Buscamos el valor de HPV en todos los datos del paciente
-        // Buscamos cualquier clave que tenga "HPV" o "VPH"
         const keyHPV = Object.keys(allData).find(x => x.toUpperCase().includes('HPV') || x.toUpperCase().includes('VPH'));
         const valorHPV = keyHPV ? String(allData[keyHPV]).toLowerCase() : '';
-        
-        // Definimos estados del HPV
         const hpvEsNormal = valorHPV.includes('negativo') || valorHPV.includes('no se detecta') || valorHPV.includes('normal') || valorHPV.includes('no detectado');
         const hpvEsPatologico = valorHPV.includes('positivo') || valorHPV.includes('detectado') || valorHPV.includes('se verifica') || valorHPV.includes('patologic') || valorHPV.includes('lesion');
 
-        // ESCENARIO A: HPV NORMAL (Verde) -> PAP No necesario
-        if (hpvEsNormal) {
-            return { 
-                color: 'green', 
-                icon: 'check', 
-                text: 'No Requerido', 
-                customMsg: 'Al tener HPV Normal (Negativo), no es necesario realizar PAP por 3 a 5 años (según criterio médico).' 
-            };
-        }
-
-        // ESCENARIO B: HPV PATOLÓGICO (Rojo) + PAP PENDIENTE/MALO
+        if (hpvEsNormal) return { color: 'green', icon: 'check', text: 'No Requerido', customMsg: 'Al tener HPV Negativo, no es necesario realizar PAP por 3 a 5 años.' };
         if (hpvEsPatologico) {
-            // Si el PAP dio bien, felicitamos
-            if (v.includes('normal') || v.includes('negativo') || v.includes('sin lesion')) {
-                return { 
-                    color: 'green', 
-                    icon: 'check', 
-                    text: 'Controlado', 
-                    customMsg: 'HPV positivo controlado. Felicitaciones, su PAP es normal.' 
-                };
-            }
-            // Si falta el PAP o dio mal -> ALERTA MÁXIMA
-            return { 
-                color: 'red', 
-                icon: 'exclamation', 
-                text: 'ACCIÓN REQUERIDA', 
-                customMsg: 'ALERTA: Test HPV de Alto Riesgo. Consulte URGENTE a su médico para realizar PAP y seguimiento.' 
-            };
+            if (v.includes('normal') || v.includes('negativo') || v.includes('sin lesion')) return { color: 'green', icon: 'check', text: 'Controlado', customMsg: 'HPV positivo controlado. PAP normal.' };
+            return { color: 'red', icon: 'exclamation', text: 'ACCIÓN REQUERIDA', customMsg: 'ALERTA: Test HPV de Alto Riesgo. Consulte URGENTE para realizar PAP.' };
         }
-
-        // ESCENARIO C: SIN DATO DE HPV (Comportamiento estándar por edad)
-        // Si no tenemos dato de HPV, volvemos a la lógica clásica
         if (noRealizado) {
             if (edad > 21) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Estudio de tamizaje pendiente.' };
             return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Aún no tiene edad de screening.' };
         }
     }
-    // =====================================================================
 
-    // --- HPV (Lógica propia del indicador) ---
     if (k.includes('HPV') || k.includes('VPH')) {
-        if (v.includes('patologic') || v.includes('anormal') || v.includes('lesion') || v.includes('positivo') || v.includes('detectado')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado positivo. Requiere seguimiento estricto (PAP).' };
-        }
-        if (v.includes('negativo') || v.includes('no detectado') || v.includes('normal')) {
-            return { color: 'green', icon: 'check', text: 'Excelente', customMsg: 'Virus no detectado. Control habitual.' };
-        }
+        if (v.includes('patologic') || v.includes('anormal') || v.includes('lesion') || v.includes('positivo') || v.includes('detectado')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado positivo. Requiere seguimiento estricto (PAP).' };
+        if (v.includes('negativo') || v.includes('no detectado') || v.includes('normal')) return { color: 'green', icon: 'check', text: 'Excelente', customMsg: 'Virus no detectado. Control habitual.' };
         if (noRealizado) {
             if (edad > 30) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Test de VPH indicado mayores de 30 años.' };
             return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Se indica a partir de los 30 años.' };
         }
     }
 
-    // ==========================================
-    // 1. REGLAS ESPECÍFICAS (HÁBITOS Y PSICOSOCIAL)
-    // ==========================================
-
-    // --- ABUSO ALCOHOL ---
     if (k.includes('ALCOHOL')) {
-        // 1. PRIMERO chequeamos lo bueno (Verde)
-        if (v.includes('no abusa') || v.includes('no') || v.includes('sin riesgo')) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Mantiene un consumo responsable o nulo.' };
-        }
-        // 2. DESPUÉS chequeamos lo malo (Rojo)
-        if (v.includes('abusa') || v.includes('si') || v.includes('riesgo')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Consumo de riesgo detectado. Busque asesoramiento profesional.' };
-        }
+        if (v.includes('no abusa') || v.includes('no') || v.includes('sin riesgo')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Mantiene un consumo responsable o nulo.' };
+        if (v.includes('abusa') || v.includes('si') || v.includes('riesgo')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Consumo de riesgo detectado. Busque asesoramiento profesional.' };
     }
 
-    // --- TABACO ---
     if (k.includes('TABACO') || k.includes('FUMA')) {
-        // 1. PRIMERO chequeamos lo bueno (Verde)
-        if (v.includes('no fuma') || v.includes('no')) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Felicitaciones! Vivir libre de humo es la mejor decisión.' };
-        }
-        // 2. DESPUÉS chequeamos lo malo (Rojo)
-        if (v.includes('fuma') || v.includes('si') || v.includes('fumador')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'El tabaquismo daña su salud. Consultar programas de cesación.' };
-        }
+        if (v.includes('no fuma') || v.includes('no')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Vivir libre de humo es la mejor decisión.' };
+        if (v.includes('fuma') || v.includes('si') || v.includes('fumador')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'El tabaquismo daña su salud. Consultar programas de cesación.' };
     }
 
-    // --- VIOLENCIA ---
     if (k.includes('VIOLENCIA')) {
-        // 1. Verde
-        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No se detectan indicadores de riesgo en este aspecto.' };
-        }
-        // 2. Rojo
-        if (v.includes('se verifica') || v.includes('si') || v.includes('detectada')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Situación de riesgo. IAPOS cuenta con equipos de contención.' };
-        }
+        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No se detectan indicadores de riesgo.' };
+        if (v.includes('se verifica') || v.includes('si') || v.includes('detectada')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Situación de riesgo. IAPOS cuenta con equipos de contención.' };
     }
 
-    // --- DEPRESIÓN ---
     if (k.includes('DEPRESION')) {
-        // 1. Verde
-        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Estado de ánimo estable según el tamizaje.' };
-        }
-        // 2. Rojo
-        if (v.includes('se verifica') || v.includes('si') || v.includes('detectada')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Signos detectados. La salud mental es prioridad, consulte.' };
-        }
+        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Estado de ánimo estable según el tamizaje.' };
+        if (v.includes('se verifica') || v.includes('si') || v.includes('detectada')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Signos detectados. La salud mental es prioridad, consulte.' };
     }
 
-    // --- CAÍDAS EN ADULTOS MAYORES ---
     if (k.includes('CAIDA')) {
-        // 1. Verde
-        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Sin riesgo elevado de caídas detectado.' };
-        }
-        // 2. Rojo
-        if (v.includes('se verifica') || v.includes('presenta') || v.includes('si')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo de caídas detectado. Se sugiere evaluar el entorno.' };
-        }
+        if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Sin riesgo elevado de caídas detectado.' };
+        if (v.includes('se verifica') || v.includes('presenta') || v.includes('si')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo de caídas detectado. Evalúe el entorno.' };
     }
 
-    // --- SEGURIDAD VIAL ---
     if (k.includes('SEGURIDAD') && k.includes('VIAL')) {
-        if (v.includes('no cumple')) {
-            return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo alto. Use cinturón/casco y respete las normas.' };
-        }
-        if (v.includes('cumple')) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Cumple con las normas de seguridad.' };
-        }
+        if (v.includes('no cumple')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo alto. Use cinturón/casco y respete las normas.' };
+        if (v.includes('cumple')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Cumple con las normas de seguridad.' };
     }
 
-    // ==========================================
-    // 2. REGLAS CLÍNICAS Y PATOLÓGICAS
-    // ==========================================
-
-    // --- ESTRATIFICACIÓN RIESGO CV ---
     if (k.includes('ESTRATIFICACION') || k.includes('RIESGO CV') || k.includes('GLOBAL')) {
         if (v.includes('alto') || v.includes('muy alto')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo Cardiovascular ALTO. Seguimiento estricto necesario.' };
         if (v.includes('medio') || v.includes('moderado')) return { color: 'yellow', icon: 'exclamation', text: 'Precaución', customMsg: 'Riesgo Moderado. Se sugieren controles periódicos.' };
         if (v.includes('bajo')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Riesgo Bajo. ¡Sigue cuidándote así!' };
     }
 
-    // --- ANEURISMA DE AORTA ---
     if (k.includes('ANEURISMA') || k.includes('AORTA')) {
-        if (v.includes('se verifica') || v.includes('detectado') || v.includes('presente') || v === 'si') {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
-        }
+        if (v.includes('se verifica') || v.includes('detectado') || v.includes('presente') || v === 'si') return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
         if (noRealizado) {
             if (sexo === 'masculino' && edad >= 75) return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'Indicado en varones mayores de 75.' };
             return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Indicado solo en varones mayores de 75 años.' };
         }
     }
 
-    // --- EPOC ---
     if (k.includes('EPOC') || k.includes('ESPIROMETRIA')) {
-        if (v.includes('se verifica') || v.includes('detectado') || v.includes('obstruccion') || v === 'si') {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Signos de EPOC detectados. Requiere tratamiento.' };
-        }
-        if (noRealizado) {
-            return { color: 'gray', icon: 'info', text: 'Condicional', customMsg: 'Este estudio se realiza solo en fumadores.' };
-        }
+        if (v.includes('se verifica') || v.includes('detectado') || v.includes('obstruccion') || v === 'si') return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Signos de EPOC detectados. Requiere tratamiento.' };
+        if (noRealizado) return { color: 'gray', icon: 'info', text: 'Condicional', customMsg: 'Este estudio se realiza solo en fumadores.' };
     }
 
-    // --- ERC (RENAL) ---
     if (k.includes('ERC') || k.includes('RENAL') || k.includes('RIÑON')) {
-        if (v.includes('patologic') || v.includes('anormal') || v.includes('alterad') || v.includes('estadio')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Función renal alterada. Consulte a su médico.' };
-        }
-    }
-// --- AGUDEZA VISUAL (CAMBIO: Ahora es Amarillo/Precaución) ---
-    if (k.includes('AGUDEZA') || k.includes('VISUAL')) {
-        if (v.includes('alterada') || v.includes('disminuida') || v.includes('anormal')) {
-            // ANTES: Era rojo. AHORA: Amarillo.
-            return { 
-                color: 'yellow', 
-                icon: 'eye', // Icono de ojo si lo tienes, sino 'exclamation'
-                text: 'Atención', 
-                customMsg: 'Visión con alteraciones leves. Se sugiere control oftalmológico periódico para seguimiento.' 
-            };
-        }
+        if (v.includes('patologic') || v.includes('anormal') || v.includes('alterad') || v.includes('estadio')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Función renal alterada. Consulte a su médico.' };
     }
 
-    // --- CONTROL ODONTOLÓGICO ---
+    if (k.includes('AGUDEZA') || k.includes('VISUAL')) {
+        if (v.includes('alterada') || v.includes('disminuida') || v.includes('anormal')) return { color: 'yellow', icon: 'eye', text: 'Atención', customMsg: 'Visión con alteraciones leves. Control oftalmológico periódico.' };
+    }
+
     if (k.includes('ODONTO') || k.includes('BUCAL')) {
         if (v === 'riesgo' || v.includes('alto riesgo')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Riesgo detectado. Solicitar turno urgente.' };
         if (v.includes('medio') || v.includes('moderado')) return { color: 'yellow', icon: 'exclamation', text: 'Precaución', customMsg: 'Riesgo medio. Requiere control.' };
     }
 
-    // --- ASPIRINA ---
     if (k.includes('ASPIRINA')) {
-        if (v.includes('no indicad') || noRealizado) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No requerida. Su riesgo cardiovascular no indica medicación.' };
+        if (v.includes('no indicad') || noRealizado) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No requerida. Riesgo cardiovascular no indica medicación.' };
         if (v.includes('indicad')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Indicada por riesgo CV. No suspender sin orden médica.' };
     }
 
-    // --- ÁCIDO FÓLICO ---
     if (k.includes('ACIDO FOLICO') || k.includes('FOLICO')) {
         if (v.includes('indicad') && !v.includes('no')) return { color: 'red', icon: 'exclamation', text: 'Recordatorio', customMsg: 'Importante si busca embarazo.' };
         if (noRealizado || v.includes('no indicad')) return { color: 'gray', icon: 'info', text: 'Informativo', customMsg: 'Se indica en mujeres que planean embarazo.' };
     }
 
-    // --- OSTEOPOROSIS ---
     if (k.includes('OSTEOPOROSIS') || k.includes('DENSITOMETRIA') || k.includes('OSEA') || k.includes('DMO')) {
-        if (v.includes('se verifica') || v.includes('osteoporosis') || v.includes('osteopenia') || v === 'si') {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Densidad ósea reducida. Importante prevenir caídas.' };
-        }
+        if (v.includes('se verifica') || v.includes('osteoporosis') || v.includes('osteopenia') || v === 'si') return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Densidad ósea reducida. Importante prevenir caídas.' };
         if (noRealizado) {
             if ((sexo === 'femenino' && edad >= 64) || (sexo === 'masculino' && edad >= 70)) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Por tu edad, este estudio es fundamental.' };
             return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio preventivo para mayores de 64 años.' };
         }
     }
 
-    // --- CÁNCER DE MAMA ---
     if (k.includes('MAMOGRAFIA') || k.includes('MAMOGRAFÍA') || k.includes('ECO MAMARIA')) {
-        if (v.includes('patologic') || v.includes('anormal') || v.includes('birads 4') || v.includes('birads 5') || v.includes('sospech')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Hallazgo detectado. Requiere consulta ginecológica.' };
-        }
+        if (v.includes('patologic') || v.includes('anormal') || v.includes('birads 4') || v.includes('birads 5') || v.includes('sospech')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Hallazgo detectado. Requiere consulta ginecológica.' };
         if (noRealizado) {
             if (edad >= 40) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Se realiza a partir de los 40 años.' };
             return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se realiza a partir de los 40 años.' };
         }
     }
 
-// --- CÁNCER DE COLON (CAMBIO: >60 con SOMF Negativo es Amarillo) ---
     if (k.includes('SOMF') || k.includes('SANGRE OCULTA') || k.includes('COLON')) {
-        
         const keyVCC = Object.keys(allData).find(x => x.toUpperCase().includes('VCC') || x.toUpperCase().includes('COLONOSCOPIA'));
         const valorVCC = keyVCC ? String(allData[keyVCC]).toLowerCase() : '';
         const vccHecha = valorVCC.includes('si') || valorVCC.includes('realizad') || valorVCC.includes('normal') || valorVCC.includes('patologic') || valorVCC.includes('polipo');
 
-        // 1. SOMF POSITIVO (Sigue siendo ROJO)
         if (v.includes('positivo') || v.includes('detectada') || v.includes('anormal') || v.includes('sangre')) {
-            return { 
-                color: 'red', 
-                icon: 'exclamation', 
-                text: 'ALERTA', 
-                customMsg: 'SOMF Positivo. La Video Colonoscopía (VCC) es necesaria para descartar lesiones.' 
-            };
+            return { color: 'red', icon: 'exclamation', text: 'ALERTA', customMsg: 'SOMF Positivo. La VCC es necesaria para descartar lesiones.' };
         }
-
-        // 2. SOMF NEGATIVO
         if (v.includes('negativo') || v.includes('no se detecta') || v.includes('normal')) {
-            // CAMBIO AQUÍ: > 60 años sin VCC pasa a AMARILLO
-            if (edad > 60 && !vccHecha) {
-                return { 
-                    color: 'yellow', // Antes 'red'
-                    icon: 'info', 
-                    text: 'Sugerencia', 
-                    customMsg: 'SOMF Normal. Sin embargo, por ser mayor de 60 años, es muy recomendable programar una Colonoscopía si nunca la realizó.' 
-                };
-            }
-            // > 50 años (Amarillo/Verde sugerencia)
-            if (edad > 50) {
-                return { 
-                    color: 'yellow', // Un amarillo suave o verde con info
-                    icon: 'info', 
-                    text: 'Bien', 
-                    customMsg: 'Resultado Normal. Recuerde que la Colonoscopía cada 5 años es el método preventivo ideal.' 
-                };
-            }
+            if (edad > 60 && !vccHecha) return { color: 'yellow', icon: 'info', text: 'Sugerencia', customMsg: 'SOMF Normal. Es recomendable programar VCC si nunca la realizó.' };
+            if (edad > 50) return { color: 'yellow', icon: 'info', text: 'Bien', customMsg: 'Normal. Recuerde que la VCC cada 5 años es el método ideal.' };
             return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Valor normal.' };
         }
-
-        // 3. NO REALIZADO
         if (noRealizado) {
             if (edad > 60 && !vccHecha) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Mayor de 60 años: La VCC es prioridad.' };
             if (edad >= 50) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el rastreo es obligatorio.' };
@@ -642,11 +561,8 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         }
     }
 
-    // --- PAP / HPV ---
     if (k.includes('PAP') || k.includes('PAPA') || k.includes('HPV') || k.includes('VPH')) {
-        if (v.includes('patologic') || v.includes('anormal') || v.includes('lesion') || v.includes('sil') || v.includes('cin') || v.includes('positivo')) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado patológico. Requiere consulta ginecológica.' };
-        }
+        if (v.includes('patologic') || v.includes('anormal') || v.includes('lesion') || v.includes('sil') || v.includes('cin') || v.includes('positivo')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Resultado patológico. Requiere consulta ginecológica.' };
         if (noRealizado) {
             if (k.includes('HPV') && edad > 30) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'Test de VPH indicado mayores de 30 años.' };
             if (k.includes('PAP') && edad > 21) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'PAP indicado mayores de 21 años.' };
@@ -654,38 +570,26 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         }
     }
 
-    // --- PRÓSTATA (PSA) ---
     if (k.includes('PROSTATA') || k.includes('PSA')) {
-        if (v.includes('normal') || v.includes('bajo') || v.includes('negativo') || v.includes('adecuado')) {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Excelente! Los valores están dentro de lo normal.' };
-        }
-        if (!noRealizado && (v.includes('elevado') || v.includes('alto') || v.includes('patologic'))) {
-            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Valor elevado. Consultar con urología.' };
-        }
+        if (v.includes('normal') || v.includes('bajo') || v.includes('negativo') || v.includes('adecuado')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Los valores están dentro de lo normal.' };
+        if (!noRealizado && (v.includes('elevado') || v.includes('alto') || v.includes('patologic'))) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Valor elevado. Consultar con urología.' };
         if (noRealizado) {
             if (edad >= 50) return { color: 'red', icon: 'exclamation', text: 'Pendiente', customMsg: 'A partir de los 50 años el control es fundamental.' };
             return { color: 'gray', icon: 'info', text: 'A futuro', customMsg: 'Se indica a partir de los 50 años.' };
         }
     }
 
-    // --- INMUNIZACIONES ---
     if (k.includes('INMUNIZACIONES') || k.includes('VACUNAS')) {
         if (v.includes('incompleto') || v.includes('falta')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Esquema incompleto. Acuda al vacunatorio.' };
     }
 
-    // --- ALIMENTACIÓN ---
     if (k.includes('ALIMENTACION') || k.includes('NUTRICION')) {
         if (v === 'no' || v.includes('mala')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Mejorar hábitos.' };
         if (v === 'si' || v.includes('buena')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Muy bien!' };
     }
 
-    // ==========================================
-    // 4. SEMÁFORO GENERAL DE COLORES (FALLBACK)
-    // ==========================================
-
     if (['PROFESIONAL', 'FECHAX', 'DNI', 'MARCA TEMPORAL'].includes(k)) return { color: 'gray', icon: 'info', text: 'Informativo' };
 
-    // --- VERDE (Excelente) ---
     if (v === 'si' || v === 'sí' || v === 'buena' || v.includes('normal') || v.includes('adecuada') || 
         v.includes('no presenta') || v.includes('no se verifica') || v.includes('no fuma') || 
         v.includes('cumple') || v.includes('bajo') || (v.includes('realiza') && !v.includes('no')) || 
@@ -693,7 +597,6 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         return { color: 'green', icon: 'check', text: 'Calma' };
     }
 
-    // --- ROJO (Alerta) ---
     if (v === 'no' || v === 'No' || v.includes('presenta') || v.includes('elevado') || v.includes('anormal') || 
         v.includes('alto') || v.includes('no control') || v.includes('no realiza') || v.includes('pendiente') || 
         v.includes('riesgo alto') || v.includes('positivo') || v.includes('incompleto') || 
@@ -701,57 +604,14 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         return { color: 'red', icon: 'times', text: 'Alerta' };
     }
 
-    // --- AMARILLO (Precaución) ---
     if (k.includes('IMC') && (v.includes('sobrepeso') || v.includes('bajo peso'))) return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
-    if (v.includes('mejorar') || v.includes('moderar') || v.includes('a vigilar') || v.includes('límite') || v.includes('riesgo moderado')) {
-        return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
-    }
+    if (v.includes('mejorar') || v.includes('moderar') || v.includes('a vigilar') || v.includes('límite') || v.includes('riesgo moderado')) return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
 
     if (v === 'si' || v.includes('normal')) return { color: 'green', icon: 'check', text: 'Bien' };
     if (v === 'no' || v.includes('anormal')) return { color: 'red', icon: 'times', text: 'Alerta' };
 
     return { color: 'gray', icon: 'question', text: 'Sin Dato' };
 }
-// ==============================================================================
-// 3. FUNCIONES DEL PORTAL PERSONAL (Dashboard y Pestañas)
-// ==============================================================================
-
-function cargarPortalPersonal(persona, resumenAI) {
-    document.getElementById('vista-inicial').style.display = 'none';
-    document.getElementById('portal-salud-container').style.display = 'block';
-
-    // ACTUALIZAMOS EL REPORTE ACTUAL
-    reporteSeleccionado = persona;
-
-    window.pacienteSexo = String(persona['Sexo'] || persona['sexo'] || '').toLowerCase().trim();
-
-    cargarDiaPreventivoTab(persona, resumenAI); 
-    cargarEstudiosTab(cachedEstudiosResults); 
-
-    const navContenedor = document.getElementById('portal-navegacion');
-    navContenedor.innerHTML = `
-        <button id="btn-tab-dia-preventivo" class="tab-btn active bg-blue-600 text-white font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
-            <i class="fas fa-heartbeat mr-2"></i> Día Preventivo
-        </button>
-        <button id="btn-tab-estudios" class="tab-btn text-gray-700 hover:bg-gray-100 font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
-            <i class="fas fa-x-ray mr-2"></i> Estudios Complementarios
-        </button>
-        <button id="btn-tab-servicios" class="tab-btn text-gray-700 hover:bg-gray-100 font-bold py-3 px-6 rounded-t-lg transition-colors duration-300">
-            <i class="fas fa-headset mr-2"></i> Otros Servicios
-        </button>
-    `;
-
-    document.querySelectorAll('.tab-btn').forEach(button => {
-        button.addEventListener('click', () => {
-            const targetId = button.id.replace('btn-tab-', 'tab-');
-            mostrarPestana(targetId);
-        });
-    });
-
-    mostrarPestana('tab-dia-preventivo');
-    window.scrollTo(0, 0);
-}
-
 
 function mostrarPestana(tabId) {
     document.querySelectorAll('.tab-pane').forEach(tab => {
@@ -769,26 +629,11 @@ function mostrarPestana(tabId) {
     }
 }
 
-// ==============================================================================
-// 🆕 FUNCIÓN NUEVA: CAMBIAR EL INFORME AL ELEGIR FECHA
-// ==============================================================================
 async function updateDashboardContent(selectedIndex) {
-    // 1. Buscamos el reporte en el array usando el índice
     const nuevoReporte = allReports[selectedIndex];
-
-    if (!nuevoReporte) {
-        console.error("No se encontró el reporte para el índice:", selectedIndex);
-        return;
-    }
-
-    // 2. Actualizamos la variable global
+    if (!nuevoReporte) return;
     reporteSeleccionado = nuevoReporte;
-    
-    // 3. Obtenemos el texto de IA de ese reporte específico
-    // (Si no se generó antes, devolverá null y mostrará el botón)
     const resumenAIFecha = await obtenerResumenAI(nuevoReporte);
-
-    // 4. Repintamos la pestaña respetando tu diseño original
     cargarDiaPreventivoTab(nuevoReporte, resumenAIFecha);
 }
 
@@ -796,17 +641,23 @@ async function updateDashboardContent(selectedIndex) {
 // 4. CONTENIDO DE LAS PESTAÑAS (SIN IA - SOLO MOTOR LOCAL)
 // ==============================================================================
 function cargarDiaPreventivoTab(persona) {
-    // NOTA: Ya no recibimos 'resumenAI' como parámetro. Todo es local.
     const fechaInforme = persona['FECHAX'] || 'N/A';
     const dashboardContenedor = document.getElementById('dashboard-contenido');
     const accionesContenedor = document.getElementById('dashboard-acciones');
-    const sexo = String(window.pacienteSexo || '').toLowerCase().trim(); 
 
-    // Edad segura
     const keyEdad = Object.keys(persona).find(k => k.toLowerCase() === 'edad');
     let edadPaciente = keyEdad && persona[keyEdad] ? parseInt(String(persona[keyEdad]).match(/\d+/)?.[0] || 0) : 0;
 
-    // Selector de historial
+    const keySexo = Object.keys(persona).find(k => k.toLowerCase() === 'sexo' || k.toLowerCase() === 'género' || k.toLowerCase() === 'genero');
+    let sexo = '';
+    if (keySexo && persona[keySexo]) {
+        sexo = String(persona[keySexo]).toLowerCase().trim();
+    } else {
+        sexo = String(window.pacienteSexo || '').toLowerCase().trim(); 
+    }
+    if (sexo.includes('masc') || sexo.includes('varon') || sexo === 'm') sexo = 'masculino';
+    if (sexo.includes('fem') || sexo.includes('mujer') || sexo === 'f') sexo = 'femenino';
+    
     let dateSelectorHTML = ''; 
     if (typeof allReports !== 'undefined' && allReports.length > 1) { 
         const optionsHtml = allReports.map((report, index) => `
@@ -818,7 +669,6 @@ function cargarDiaPreventivoTab(persona) {
     let tarjetasHTML = '';
     let resultadosParaMotorLocal = [];
 
-    // Recorremos los datos para evaluar riesgos y armar las tarjetas inferiores
     for (const [key, value] of Object.entries(persona)) {
         const vLimpio = String(value || '').trim();
         if (!vLimpio || (vLimpio.length === 1 && isNaN(vLimpio))) continue;
@@ -827,13 +677,19 @@ function cargarDiaPreventivoTab(persona) {
         if (['DNI', 'ID', 'apellido y nombre', 'Efector', 'Tipo', 'Marca temporal', 'FECHAX', 'Profesional', 'REPORTE_MEDICO'].includes(key)) continue;
 
         const safeValue = String(value || '');
-        const isRawDate = key.toUpperCase() === 'RAWDATE' || safeValue.includes('RAWDATE');
+        const keyUpper = key.toUpperCase();
+        const isRawDate = keyUpper === 'RAWDATE' || safeValue.includes('RAWDATE');
         const isIsoDate = safeValue.includes('T') && safeValue.includes('Z') && safeValue.length > 15;
         if (isRawDate || isIsoDate || safeValue.trim() === '') continue;
 
+        const keyNormalized = keyUpper.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const terminosFemeninos = ['MAMOGRAFIA', 'ECO_MAMARIA', 'ECO MAMARIA', 'HPV', 'PAP', 'ACIDO FOLICO', 'UTERINO', 'CERVICO'];
+        const terminosMasculinos = ['PROSTATA', 'PSA'];
+
+        if (sexo === 'masculino' && terminosFemeninos.some(t => keyNormalized.includes(t))) continue;
+        if ((sexo === 'femenino' || sexo === 'mujer') && terminosMasculinos.some(t => keyNormalized.includes(t))) continue;
+
         const risk = getRiskLevel(key, safeValue, edadPaciente, sexo, persona);
-        
-        // Guardar para el Motor Local (Si no es gris ni violeta)
         if (risk.color !== 'violet' && risk.color !== 'gray') {
             resultadosParaMotorLocal.push({ indicador: key, color: risk.color, customMsg: risk.customMsg || risk.text });
         }
@@ -843,34 +699,33 @@ function cargarDiaPreventivoTab(persona) {
 
         tarjetasHTML += `
             <div class="p-4 border-l-4 ${colorMap[risk.color] || colorMap.gray} rounded-md shadow-sm transition hover:shadow-lg">
-                <div class="flex items-center justify-between mb-1"><h3 class="font-bold text-md">${key}</h3><span class="font-semibold text-sm px-2 py-0.5 rounded-full bg-white border border-gray-200 shadow-sm text-gray-700 whitespace-nowrap ml-2">${risk.text}</span></div>
+                <div class="flex items-center justify-between mb-1">
+                    <h3 class="font-bold text-md">${key}</h3>
+                    <span class="font-semibold text-sm px-2 py-0.5 rounded-full bg-white border border-gray-200 shadow-sm text-gray-700 whitespace-nowrap ml-2">${risk.text}</span>
+                </div>
                 <p class="text-sm italic mb-2 text-gray-800 mt-2">${safeValue}</p>
-                <div class="text-xs flex items-center mt-3 border-t pt-2 border-${risk.color}-200 opacity-90 font-medium"><i class="${iconMap[risk.icon] || iconMap.info} mr-2"></i> ${risk.customMsg || safeValue}</div>
+                <div class="text-xs flex items-center mt-3 border-t pt-2 border-${risk.color}-200 opacity-90 font-medium">
+                    <i class="${iconMap[risk.icon] || iconMap.info} mr-2"></i> ${risk.customMsg || safeValue}
+                </div>
             </div>`;
     }
 
-    // GENERAMOS EL REPORTE FINAL CON EL MOTOR LOCAL
-    // Si ya existía un reporte guardado en la base de datos por un médico (REPORTE_MEDICO), usamos ese. Si no, generamos el nuevo automático.
     const informeFinalHTML = persona['REPORTE_MEDICO'] ? persona['REPORTE_MEDICO'] : generarResumenMedicoLocal(persona, resultadosParaMotorLocal);
 
-    // Guardamos en la memoria global para que el botón de Imprimir funcione
     window.datosImpresionActual = {
         nombre: persona['apellido y nombre'] || 'Afiliado',
         texto: informeFinalHTML
     };
 
-    // Armamos la pantalla
     dashboardContenedor.innerHTML = `
         ${dateSelectorHTML} 
         <div id="informe-imprimible" class="shadow-xl rounded-lg overflow-hidden bg-white p-6">
             <div id="ai-summary-dynamic" class="mb-6 rounded-lg"></div>
-
             <h2 class="text-xl font-semibold mb-3 mt-8 text-gray-800 border-b pb-2">Detalle Clínico de Indicadores</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">${tarjetasHTML}</div>
         </div>
     `;
 
-    // ACTIVAMOS EL EDITOR (Le pasamos el HTML generado localmente)
     configurarEditorInformeLocal(persona, informeFinalHTML);
 
     if (typeof allReports !== 'undefined' && allReports.length > 1) {
@@ -889,14 +744,14 @@ function cargarDiaPreventivoTab(persona) {
         </div>
     `;
 }
+
 // ==============================================================================
-// 5. BARRA DE HERRAMIENTAS DEL INFORME (EDITAR + GUARDAR)
+// 5. BARRA DE HERRAMIENTAS DEL INFORME
 // ==============================================================================
 function configurarEditorInformeLocal(persona, informeHTML) {
     const containerAI = document.getElementById('ai-summary-dynamic');
-    containerAI.innerHTML = ""; // Limpiamos
+    containerAI.innerHTML = ""; 
 
-    // --- 1. PESTAÑA VISTA PREVIA ---
     const tabContainer = document.createElement('div');
     tabContainer.className = "flex border-b border-gray-300 mb-4";
     const tabVista = document.createElement('button');
@@ -905,14 +760,12 @@ function configurarEditorInformeLocal(persona, informeHTML) {
     tabContainer.appendChild(tabVista);
     containerAI.appendChild(tabContainer);
 
-    // --- 2. CONTENEDOR DEL INFORME ---
     const divInforme = document.createElement('div');
     divInforme.id = "contenido-informe-visual";
     divInforme.className = "bg-white p-2 min-h-[200px]";
     divInforme.innerHTML = informeHTML; 
     containerAI.appendChild(divInforme);
     
-    // --- 3. BARRA DE HERRAMIENTAS (SOLO PARA ADMIN) ---
     if (currentUser && currentUser.rol === 'admin') {
         const barraHerramientas = document.createElement('div');
         barraHerramientas.className = "mt-6 flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200";
@@ -935,24 +788,19 @@ function configurarEditorInformeLocal(persona, informeHTML) {
         `;
         containerAI.appendChild(barraHerramientas);
 
-        // LÓGICA DE BOTONES
         const btnEditar = document.getElementById('btn-editar-visual');
         const btnGuardar = document.getElementById('btn-guardar-visual');
         const btnCancelar = document.getElementById('btn-cancelar-visual');
 
-        // EDITAR
         btnEditar.onclick = () => alternarEdicionVisual(true, divInforme);
 
-        // GUARDAR (Guarda los cambios manuales en el Excel, columna REPORTE_MEDICO)
         btnGuardar.onclick = async () => {
             const textoFinal = divInforme.innerHTML;
             const btnTextoOriginal = btnGuardar.innerHTML;
-            
             btnGuardar.disabled = true;
             btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
 
             try {
-                // Sigue usando la misma ruta que usábamos para guardar el de la IA
                 const response = await fetch('/api/actualizar-informe-ia', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -966,7 +814,6 @@ function configurarEditorInformeLocal(persona, informeHTML) {
                 if (!response.ok) throw new Error("Error al guardar");
 
                 window.datosImpresionActual.texto = textoFinal;
-                
                 Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: '¡Informe Guardado!', showConfirmButton: false, timer: 2000 });
                 alternarEdicionVisual(false, divInforme);
 
@@ -979,7 +826,6 @@ function configurarEditorInformeLocal(persona, informeHTML) {
             }
         };
 
-        // CANCELAR
         btnCancelar.onclick = () => {
             divInforme.innerHTML = informeHTML; 
             window.datosImpresionActual.texto = informeHTML;
@@ -988,410 +834,56 @@ function configurarEditorInformeLocal(persona, informeHTML) {
     }
 }
 
-// FUNCION AUXILIAR ACTUALIZADA (Maneja la visibilidad de los botones)
 function alternarEdicionVisual(activar, elementoTexto) {
     const btnEditar = document.getElementById('btn-editar-visual');
     const btnGuardar = document.getElementById('btn-guardar-visual');
     const btnCancelar = document.getElementById('btn-cancelar-visual');
     
     if (activar) {
-        // MODO EDICIÓN
         elementoTexto.contentEditable = "true";
         elementoTexto.style.outline = "2px dashed #3b82f6";
         elementoTexto.style.backgroundColor = "#ffffff";
         elementoTexto.focus();
 
-        // Ocultamos "Editar", mostramos "Cancelar". "Guardar" se queda.
         if(btnEditar) btnEditar.classList.add('hidden');
         if(btnCancelar) btnCancelar.classList.remove('hidden');
         if(btnGuardar) btnGuardar.innerHTML = '<i class="fas fa-save mr-2"></i>Guardar Cambios';
 
     } else {
-        // MODO LECTURA
         elementoTexto.contentEditable = "false";
         elementoTexto.style.outline = "none";
         elementoTexto.style.backgroundColor = "transparent";
 
-        // Restauramos botones originales
         if(btnEditar) btnEditar.classList.remove('hidden');
         if(btnCancelar) btnCancelar.classList.add('hidden');
         if(btnGuardar) btnGuardar.innerHTML = '<i class="fas fa-check mr-2"></i>Guardar / Confirmar';
     }
 }
-function mostrarPanelGenerador(persona, container) {
-    container.innerHTML = `
-        <div class="bg-yellow-50 p-6 rounded-lg border border-yellow-200 text-center">
-            <p class="text-yellow-800 font-bold mb-4">
-                <i class="fas fa-magic"></i> Generador de Informes IA
-            </p>
-            <button id="btn-generar-ia" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full shadow-lg transition transform hover:scale-105">
-                <i class="fas fa-robot mr-2"></i> Generar Borrador
-            </button>
-        </div>
-    `;
-
-    document.getElementById('btn-generar-ia').onclick = async function() {
-        const btn = this;
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Analizando...';
-        
-        try {
-            const resp = await fetch('/api/analizar-informe', { 
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ persona: persona }) 
-            });
-            const result = await resp.json();
-            
-            if (!resp.ok) throw new Error(result.error || 'Error IA');
-
-            // Una vez tenemos el texto, iniciamos el editor
-            //iniciarEditorIA(persona, container, result.resumen);
-            configurarSeccionIA(persona, result.resumen);
-
-        } catch (e) {
-            console.error(e);
-            Swal.fire('Error', 'IA: ' + e.message, 'error');
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-robot mr-2"></i> Reintentar';
-        }
-    };
-}
-
-function iniciarEditorIA(persona, container, textoInicial) {
-    // Guardamos en variable global
-    borradorTemporalIA = textoInicial;
-
-    // Inyectamos el HTML del editor con ESTILOS EN LÍNEA para asegurar la altura
-    container.innerHTML = `
-        <div class="bg-white p-2 rounded-lg border border-gray-300 shadow-sm">
-            <div class="flex border-b border-gray-200 mb-2">
-                <button id="tab-vista" class="flex-1 py-2 text-sm font-bold text-blue-600 border-b-2 border-blue-600 bg-blue-50">👁️ Vista Previa</button>
-                <button id="tab-codigo" class="flex-1 py-2 text-sm text-gray-500 hover:text-blue-600">📝 Editar Código</button>
-            </div>
-
-            <div id="vista-previa-box" style="min-height: 400px; max-height: 600px; overflow-y: auto; display: block;" class="p-4 border border-gray-100 rounded bg-gray-50">
-                ${textoInicial} </div>
-
-            <div id="codigo-box" style="display: none;">
-                <textarea id="texto-borrador" style="min-height: 400px;" class="w-full p-3 border border-gray-300 rounded font-mono text-xs bg-gray-800 text-green-400 focus:outline-none">${textoInicial}</textarea>
-            </div>
-
-            <div class="mt-3 flex justify-end space-x-3 border-t pt-3">
-                <button id="btn-cancelar-edicion" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
-                    Cancelar
-                </button>
-                <button id="btn-guardar-edicion" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow flex items-center">
-                    <i class="fas fa-save mr-2"></i> GUARDAR
-                </button>
-            </div>
-        </div>
-    `;
-
-    // --- ASIGNACIÓN DE EVENTOS (Inmediatamente después de crear el HTML) ---
-
-    const tabVista = document.getElementById('tab-vista');
-    const tabCodigo = document.getElementById('tab-codigo');
-    const vistaBox = document.getElementById('vista-previa-box');
-    const codigoBox = document.getElementById('codigo-box');
-    const textarea = document.getElementById('texto-borrador');
-    
-    // Cambio de Pestañas
-    tabVista.onclick = () => {
-        // Al volver a vista previa, actualizamos el HTML desde el textarea
-        borradorTemporalIA = textarea.value;
-        vistaBox.innerHTML = borradorTemporalIA;
-        
-        vistaBox.style.display = 'block';
-        codigoBox.style.display = 'none';
-        
-        tabVista.className = "flex-1 py-2 text-sm font-bold text-blue-600 border-b-2 border-blue-600 bg-blue-50";
-        tabCodigo.className = "flex-1 py-2 text-sm text-gray-500 hover:text-blue-600";
-    };
-
-    tabCodigo.onclick = () => {
-        // Al ir a código, aseguramos que el textarea tenga el último valor
-        textarea.value = borradorTemporalIA;
-        
-        vistaBox.style.display = 'none';
-        codigoBox.style.display = 'block';
-        
-        tabCodigo.className = "flex-1 py-2 text-sm font-bold text-blue-600 border-b-2 border-blue-600 bg-blue-50";
-        tabVista.className = "flex-1 py-2 text-sm text-gray-500 hover:text-blue-600";
-    };
-
-    // Sincronización en tiempo real (mientras escribes en código)
-    textarea.addEventListener('input', () => {
-        borradorTemporalIA = textarea.value;
-    });
-
-    // Botón Cancelar
-    document.getElementById('btn-cancelar-edicion').onclick = () => {
-        // Recargamos la sección con los datos originales (sin guardar)
-        // O simplemente recargamos el dashboard para limpiar
-        configurarSeccionIA(persona, persona.REPORTE_MEDICO); // Vuelve al estado anterior
-    };
-
-    // Botón Guardar
-    document.getElementById('btn-guardar-edicion').onclick = async function() {
-        const btn = this;
-        const textoFinal = borradorTemporalIA; // Usamos la variable global sincronizada
-        
-        if (!textoFinal || textoFinal.length < 10) return Swal.fire('Atención', 'El informe está vacío.', 'warning');
-        
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
-
-        try {
-            const resp = await fetch('/api/guardar-reporte', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ 
-                    dni: persona.DNI, 
-                    nombre: persona['apellido y nombre'],
-                    reporteTexto: textoFinal 
-                })
-            });
-            
-            if (resp.ok) {
-                Swal.fire({
-                    icon: 'success',
-                    title: '¡Guardado!',
-                    showConfirmButton: false,
-                    timer: 1500
-                });
-                // Actualizamos el objeto local y la vista
-                persona.REPORTE_MEDICO = textoFinal;
-                configurarSeccionIA(persona, textoFinal); // Volvemos a modo visualización
-            } else {
-                throw new Error('Error al guardar');
-            }
-        } catch (error) {
-            Swal.fire('Error', 'Fallo al guardar: ' + error.message, 'error');
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-save mr-2"></i> GUARDAR';
-        }
-    };
-}
-// Función extra por si quieres editar algo ya guardado
-function editarInformeExistente() {
-    const container = document.getElementById('ai-summary-dynamic');
-    // Usamos el reporte seleccionado global
-    if (reporteSeleccionado) {
-        mostrarEditorIA(reporteSeleccionado, container);
-        // Pre-llenamos el editor con lo que ya había
-        setTimeout(() => {
-            const txtArea = document.getElementById('texto-borrador');
-            const vista = document.getElementById('vista-previa-box');
-            const panelBoton = document.getElementById('panel-boton-generar');
-            const divEditor = document.getElementById('editor-borrador');
-
-            if(txtArea && window.tempInformeAI) {
-                txtArea.value = window.tempInformeAI;
-                vista.innerHTML = window.tempInformeAI;
-                panelBoton.style.display = 'none'; // Ocultar botón generar
-                divEditor.style.display = 'block'; // Mostrar editor directo
-            }
-        }, 200);
-    }
-}
-
-function asignarEventosBotonesIA(persona) {
-    const btnGenerar = document.getElementById('btn-generar-ia');
-    const divEditor = document.getElementById('editor-borrador');
-    const txtArea = document.getElementById('texto-borrador');
-    const btnGuardar = document.getElementById('btn-guardar-excel');
-    const btnCancelar = document.getElementById('btn-cancelar');
-
-    if (btnGenerar) {
-        btnGenerar.onclick = async () => {
-            btnGenerar.disabled = true;
-            btnGenerar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Analizando datos...';
-            
-            try {
-                // Pasamos el objeto "persona" COMPLETO, que tiene los datos del año seleccionado
-                const resp = await fetch('/api/analizar-informe', { 
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ persona: persona }) 
-                });
-
-                const result = await resp.json();
-                
-                if (!resp.ok) throw new Error(result.error || 'Error en la IA');
-
-                txtArea.value = result.resumen || "Error al recibir texto.";
-                
-                divEditor.style.display = 'block';
-                btnGenerar.style.display = 'none'; 
-
-            } catch (e) {
-                console.error(e);
-                Swal.fire('Error', 'No se pudo conectar con la IA: ' + e.message, 'error');
-                btnGenerar.disabled = false;
-                btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Reintentar';
-            }
-        };
-
-        btnCancelar.onclick = () => {
-            divEditor.style.display = 'none';
-            btnGenerar.style.display = 'inline-block';
-            btnGenerar.disabled = false;
-            btnGenerar.innerHTML = '<i class="fas fa-robot mr-2"></i> Generar Borrador con IA';
-        };
-
-        btnGuardar.onclick = async () => {
-            const textoFinal = txtArea.value.trim();
-            if (!textoFinal) return Swal.fire('Atención', 'El informe está vacío.', 'warning');
-            
-            btnGuardar.disabled = true;
-            btnGuardar.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
-
-            try {
-                const resp = await fetch('/api/guardar-reporte', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        dni: persona.DNI, 
-                        nombre: persona['apellido y nombre'],
-                        reporteTexto: textoFinal 
-                    })
-                });
-                
-                if (resp.ok) {
-                    Swal.fire({
-                        icon: 'success',
-                        title: '¡Guardado!',
-                        text: 'El informe ha sido validado y guardado en el Excel.',
-                        showConfirmButton: false,
-                        timer: 2000
-                    });
-                    // Actualizamos visualmente
-                    persona.REPORTE_MEDICO = textoFinal;
-                    configurarSeccionIA(persona, textoFinal);
-                } else {
-                    throw new Error('Error al guardar');
-                }
-            } catch (error) {
-                Swal.fire('Error', 'Fallo al guardar: ' + error.message, 'error');
-                btnGuardar.disabled = false;
-                btnGuardar.innerHTML = '<i class="fas fa-save mr-2"></i> APROBAR Y GUARDAR';
-            }
-        };
-    }
-}
 
 // ==============================================================================
-// 6. FUNCIONES DE ESTUDIOS COMPLEMENTARIOS (TU CÓDIGO ORIGINAL)
-// ==============================================================================
-
-function cargarEstudiosTab(estudiosResults) {
-    const contenedor = document.getElementById('estudios-complementarios-lista');
-    if (!contenedor) return;
-    
-    const sexo = window.pacienteSexo;
-    const estudiosMaestros = [
-        { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', key: 'laboratorio' },
-        { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia', soloMujeres: true },
-        { nombre: 'Ecografía', icon: 'fas fa-ultrasound', key: 'ecografia' },
-        { nombre: 'Espirometría', icon: 'fas fa-lungs', key: 'espirometria' },
-        { nombre: 'Enfermería', icon: 'fas fa-user-nurse', key: 'enfermeria' },
-        { nombre: 'Densitometría', icon: 'fas fa-bone', key: 'densitometria' },
-        { nombre: 'Videocolonoscopia (VCC)', icon: 'fas fa-camera', key: 'vcc' },
-        { nombre: 'Eco mamaria', icon: 'fas fa-ultrasound', key: 'ecomamaria', soloMujeres: true },
-        { nombre: 'Odontología', icon: 'fas fa-tooth', key: 'odontologia' }, 
-        { nombre: 'Biopsia', icon: 'fas fa-microscope', key: 'biopsia' }, 
-        { nombre: 'Oftalmología', icon: 'fas fa-eye', key: 'oftalmologia' },
-        { nombre: 'Otros Resultados', icon: 'fas fa-file-medical', key: 'otros' },
-    ];
-
-    let html = '';
-    window._cachedEnfermeriaData = null;
-
-    estudiosMaestros.forEach(estudio => {
-        if (sexo === 'masculino' && estudio.soloMujeres) {
-            return; 
-        }
-
-        const result = estudiosResults[estudio.key];
-        const isAvailable = result && (result.link || result.datos);
-        
-        let clickAction = '';
-        
-        if (isAvailable) {
-            if (estudio.key === 'enfermeria') {
-                window._cachedEnfermeriaData = result.datos;
-                clickAction = `onclick="abrirModalEnfermeria(window._cachedEnfermeriaData); return false;"`;
-            } else {
-                clickAction = `onclick="window.open('${result.link}', '_blank')"`;
-            }
-        }
-
-        const lastResultDate = result && result.fechaResultado ? result.fechaResultado : null;
-
-        const subtitleHtml = lastResultDate
-            ? `<p class="text-xs text-gray-500 mt-1">Última fecha de estudio: <span class="font-medium text-green-700">${lastResultDate}</span></p>`
-            : `<p class="text-xs text-gray-500 mt-1"></p>`;
-
-        const linkClasses = isAvailable 
-            ? 'border-green-500 hover:border-green-700 bg-green-50 hover:bg-green-100 cursor-pointer'
-            : 'border-purple-500 opacity-70 cursor-default';
-        
-        const iconClasses = isAvailable ? 'text-green-600' : 'text-purple-600';
-
-        const onClickHandler = isAvailable 
-            ? clickAction 
-            : `onclick="Swal.fire('Aún No Disponible', 'Este estudio no tiene resultados cargados todavía.', 'info')"`;
-
-        html += `
-            <div ${onClickHandler}
-                class="flex items-center p-4 bg-white rounded-lg shadow hover:shadow-md transition duration-200 border-l-4 ${linkClasses}">
-                <i class="${estudio.icon} ${iconClasses} text-2xl mr-4"></i>
-                <div class="flex-grow">
-                    <span class="font-semibold text-lg text-gray-800">${estudio.nombre}</span>
-                    ${subtitleHtml} 
-                </div>
-                <span class="ml-auto text-sm font-medium text-right ${isAvailable ? 'text-green-600 font-bold' : 'text-gray-400'}">
-                    ${isAvailable ? 'VER RESULTADO' : 'PENDIENTE'}
-                </span>
-                <i class="fas fa-chevron-right ml-2 text-gray-400"></i>
-            </div>
-        `;
-    });
-    contenedor.innerHTML = html;
-}
-
-// ==============================================================================
-// 7. FUNCIONES DE UTILIDAD (PDF, IMPRIMIR, COMPARTIR, MODAL AI)
+// 7. FUNCIONES DE UTILIDAD 
 // ==============================================================================
 function mostrarInformeEscrito() {
-    // 1. Intentamos recuperar los datos de la memoria segura
     let datos = window.datosImpresionActual;
     
-    // 2. Paracaídas: Si la memoria está vacía, intentamos leer lo que se ve en pantalla
     if (!datos || !datos.texto) {
         const divContenido = document.getElementById('ai-summary-dynamic');
-        // Nos aseguramos de no agarrar botones ni editores, solo el informe
         if (divContenido && !divContenido.innerHTML.includes('<textarea')) {
             datos = {
                 nombre: reporteSeleccionado ? reporteSeleccionado['apellido y nombre'] : 'Paciente',
-                texto: divContenido.innerHTML // Agarramos el HTML crudo
+                texto: divContenido.innerHTML 
             };
         }
     }
 
-    // Si sigue sin haber datos, alerta
     if (!datos || !datos.texto || datos.texto.length < 10) {
         return Swal.fire('Atención', 'No hay un informe generado disponible para imprimir.', 'warning');
     }
 
     const nombre = datos.nombre;
-    // AQUÍ ESTÁ LA CLAVE: Usamos el texto directo, SIN .replace() que rompa el HTML
     let resumenAI = datos.texto; 
 
-    // Limpieza extra por si quedaron botones de edición dentro del HTML guardado
     if (resumenAI.includes('btn-editar-existente')) {
-        // Truco rápido para quitar la barrita de edición del HTML a imprimir
         resumenAI = resumenAI.split('<div class="mt-2 text-right border-t pt-2">')[0];
     }
 
@@ -1422,10 +914,9 @@ function mostrarInformeEscrito() {
         </div>
     `;
 
-    // Mostramos el modal
     Swal.fire({
         html: `<div id="modal-informe-ai">${printableContent}</div>`,
-        width: '800px', // Un poco más ancho para que se vea bien el diseño
+        width: '800px', 
         showCancelButton: true,
         confirmButtonText: '<i class="fas fa-print"></i> Imprimir',
         cancelButtonText: 'Cerrar',
@@ -1527,6 +1018,7 @@ function abrirModalEnfermeria(datosRaw) {
     `;
     document.body.insertAdjacentHTML('beforeend', modalHTML);
 }
+
 function compartirDashboard() {
     Swal.fire({
         title: 'Compartir Portal de Salud',
@@ -1576,9 +1068,6 @@ function copyCurrentUrl() {
         document.body.removeChild(el);
     }
 }
-// =======================================================
-// LÓGICA DE INTERFAZ DE ADMINISTRADOR
-// =======================================================
 
 const btnBuscar = document.getElementById('btn-buscar');
 const inputBuscar = document.getElementById('dni-input');
@@ -1600,11 +1089,7 @@ if (btnBuscar && inputBuscar) {
     });
 }
 
-// ==========================================
-// 🔒 FUNCIÓN PARA CAMBIAR CONTRASEÑA (CON NOMBRE Y DNI)
-// ==========================================
 async function cambiarClave() {
-    // 1. Verificar sesión
     const usuarioLogueadoStr = localStorage.getItem('iapos_user');
     
     if (!usuarioLogueadoStr) {
@@ -1614,7 +1099,6 @@ async function cambiarClave() {
 
     const usuarioLogueado = JSON.parse(usuarioLogueadoStr);
 
-    // 2. Mostrar A QUIÉN le vamos a cambiar la clave (Para que no te asustes)
     const { isConfirmed } = await Swal.fire({
         title: '🔒 Cambio de Seguridad',
         html: `Vas a cambiar la contraseña del usuario:<br>
@@ -1628,7 +1112,6 @@ async function cambiarClave() {
 
     if (!isConfirmed) return;
 
-    // 3. Pedir la nueva clave
     const { value: nueva } = await Swal.fire({
         title: 'Nueva Contraseña',
         input: 'password',
@@ -1644,7 +1127,6 @@ async function cambiarClave() {
         return;
     }
 
-    // 4. Confirmar la nueva clave
     const { value: confirmacion } = await Swal.fire({
         title: 'Confirma la Contraseña',
         input: 'password',
@@ -1657,9 +1139,8 @@ async function cambiarClave() {
         return;
     }
 
-    // 5. Enviar al servidor
     try {
-        Swal.showLoading(); // Mostramos relojito de carga
+        Swal.showLoading(); 
         
         const response = await fetch('/api/auth/cambiar-password', {
             method: 'POST',
@@ -1684,7 +1165,6 @@ async function cambiarClave() {
     }
 }
 
-// 2. Botón flotante "BUSCAR OTRO PACIENTE"
 const btnNuevaBusqueda = document.getElementById('btn-nueva-busqueda');
 if (btnNuevaBusqueda) {
     btnNuevaBusqueda.addEventListener('click', () => {
@@ -1692,25 +1172,21 @@ if (btnNuevaBusqueda) {
         document.getElementById('dni-input').value = '';
         document.getElementById('dni-input').focus();
     });
-}document.getElementById('btn-nueva-busqueda')
+}
 
-// 3. Botón "X" para cerrar buscador (por si te arrepientes)
 const btnCerrarBusqueda = document.getElementById('btn-cerrar-busqueda');
 if (btnCerrarBusqueda) {
     btnCerrarBusqueda.addEventListener('click', () => {
         document.getElementById('search-container').style.display = 'none';
     });
 }
-// ==============================================================================
-// ⚡ FUNCIÓN DE ALTA RÁPIDA (ADMIN) - CON WHATSAPP PERSONALIZADO
-// ==============================================================================
+
 async function crearUsuarioRapido() {
     const dniInput = document.getElementById('admin-dni-input');
     const dni = dniInput.value.trim();
 
     if (!dni || dni.length < 6) return Swal.fire('Error', 'Ingresa un DNI válido', 'warning');
 
-    // Efecto de carga
     const btn = event.currentTarget; 
     const originalText = btn.innerHTML;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
@@ -1726,37 +1202,26 @@ async function crearUsuarioRapido() {
         const data = await response.json();
 
         if (response.ok) {
-            // 1. Mostrar resultado en pantalla
             document.getElementById('admin-resultado').classList.remove('hidden');
             document.getElementById('admin-pass-display').innerText = data.password;
 
-            // 🌟 2. OBTENER EL NOMBRE DEL INFORME ACTUAL
             let nombrePaciente = "";
-            // Verificamos si hay un nombre guardado en la memoria del informe que estamos viendo
             if (window.datosImpresionActual && window.datosImpresionActual.nombre) {
-                // Lo ponemos en formato Título (ej: Maria Florencia) o lo dejamos como venga
                 nombrePaciente = window.datosImpresionActual.nombre; 
             }
 
-            // Armamos el saludo dependiendo de si encontramos el nombre o no
             const saludo = nombrePaciente ? `Hola *${nombrePaciente}*! 👋` : `Hola! 👋`;
-
-            // 🌟 3. PREPARAR LINK DE WHATSAPP (Con tu nuevo texto)
             const mensaje = `${saludo} Desde el Programa Día Preventivo IAPOS te enviamos tus credenciales de acceso para que puedas acceder a tu Portal Personal de Salud donde encontrarás los resultados de tus estudios y las recomendaciones de tu equipo de salud! Gracias por hacerte el Día Preventivo y te esperamos pronto.\n\n🆔 *Usuario (DNI):* ${data.dni}\n🔒 *Clave Provisoria:* ${data.password}\n\nIngresa ahora para ver tus estudios: https://portal-afiliado-iapos.onrender.com/`;
             
-            // Codificamos el texto para que los espacios y emojis funcionen en los links web
             const linkWhatsapp = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
-            
-            // Le inyectamos el link al botón verde
             document.getElementById('btn-whatsapp-share').href = linkWhatsapp;
 
-            // 4. Feedback visual
             Swal.fire({
                 toast: true, position: 'top-end', icon: 'success', 
                 title: 'Usuario Generado', showConfirmButton: false, timer: 1500
             });
             
-            dniInput.value = ''; // Limpiar el input
+            dniInput.value = ''; 
 
         } else {
             Swal.fire('Error', data.error || 'No se pudo crear', 'error');
@@ -1770,59 +1235,36 @@ async function crearUsuarioRapido() {
         btn.disabled = false;
     }
 }
-// ==============================================================================
-// 🧹 LIMPIAR PANEL DE ALTA RÁPIDA (Evitar que quede el usuario anterior)
-// ==============================================================================
+
 function resetearPanelAltaRapida() {
-    // 1. Ocultar el recuadro verde con la clave y el botón de WhatsApp
     const resultadoContainer = document.getElementById('admin-resultado');
-    if (resultadoContainer) {
-        resultadoContainer.classList.add('hidden');
-    }
+    if (resultadoContainer) resultadoContainer.classList.add('hidden');
 
-    // 2. Limpiar el campo donde escribes el DNI
     const dniInput = document.getElementById('admin-dni-input');
-    if (dniInput) {
-        dniInput.value = '';
-    }
+    if (dniInput) dniInput.value = '';
 
-    // 3. Borrar el texto de la contraseña visualmente por seguridad
     const passwordDisplay = document.getElementById('admin-pass-display');
-    if (passwordDisplay) {
-        passwordDisplay.innerText = '...';
-    }
+    if (passwordDisplay) passwordDisplay.innerText = '...';
 }  
-// ==============================================================================
-// 🧹 EVENTO: LIMPIAR PANEL AL BUSCAR OTRO PACIENTE
-// ==============================================================================
-// Esto le agrega la tarea de limpiar al botón, sin importar dónde esté el código original
+
 const botonBuscarOtro = document.getElementById('btn-nueva-busqueda');
 if (botonBuscarOtro) {
     botonBuscarOtro.addEventListener('click', () => {
         resetearPanelAltaRapida();
     });
 }
-// ==============================================================================
-// 🧠 MOTOR DE SÍNTESIS CLÍNICA LOCAL (DISEÑO TIPO IA - INSTANTÁNEO)
-// ==============================================================================
+
 function generarResumenMedicoLocal(persona, resultadosEvaluados) {
-   // =========================================================
-    // 1. EXTRAER DATOS DEL ENCABEZADO (CON LECTURA INTELIGENTE)
-    // =========================================================
     const nombreCompleto = persona['apellido y nombre'] || persona['Nombre'] || 'Paciente';
     
-    // Magia para sacar el primer nombre real
     let primerNombre = "Paciente";
     if (nombreCompleto !== 'Paciente') {
         if (nombreCompleto.includes(',')) {
-            // Si viene como "Arizaga, Gaston" -> tomamos lo que está después de la coma
             primerNombre = nombreCompleto.split(',')[1].trim().split(' ')[0];
         } else {
-            // Si viene como "Arizaga Gaston" -> tomamos la segunda palabra
             const partes = nombreCompleto.trim().split(' ');
             primerNombre = partes.length > 1 ? partes[1] : partes[0];
         }
-        // Lo ponemos en formato Título (Gaston) en lugar de GASTON
         primerNombre = primerNombre.charAt(0).toUpperCase() + primerNombre.slice(1).toLowerCase();
     }
 
@@ -1831,7 +1273,6 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
     const profesional = persona['Profesional'] || persona['PROFESIONAL'] || 'tu médico/a preventivista';
     const efector = persona['Efector'] || persona['EFECTOR'] || 'IAPOS';
 
-    // 2. CREAR EL ENCABEZADO Y SALUDO (Igual a la imagen)
     let html = `
         <div class="overflow-x-auto mb-8 mt-4">
             <table class="min-w-full bg-gray-50 rounded-lg overflow-hidden text-sm text-left text-gray-700 shadow-sm border border-gray-200">
@@ -1863,7 +1304,6 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
         </p>
     `;
 
-    // 3. CLASIFICADOR DE TARJETAS (Agrupa los indicadores por temática)
     const grupos = {
         '🫀 Salud Cardiovascular y Renal': [],
         '🧠 Hábitos y Bienestar': [],
@@ -1887,12 +1327,10 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
         }
     });
 
-    // 4. DIBUJAR LAS TARJETAS (Grid de 2 columnas)
     html += `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">`;
     
     for (const [nombreGrupo, items] of Object.entries(grupos)) {
         if (items.length > 0) {
-            // Colores de borde según el grupo para darle variedad
             let borderColor = 'border-blue-200'; let bgColor = 'bg-blue-50'; let titleColor = 'text-blue-800';
             if(nombreGrupo.includes('Cardiovascular')) { borderColor = 'border-green-200'; bgColor = 'bg-green-50'; titleColor = 'text-green-800'; }
             if(nombreGrupo.includes('Hábitos')) { borderColor = 'border-indigo-200'; bgColor = 'bg-indigo-50'; titleColor = 'text-indigo-800'; }
@@ -1905,7 +1343,6 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
             `;
             
             items.forEach(item => {
-                // Destacar colores: Rojo = ⚠️ Alerta, Amarillo = ⏳ Pendiente, Verde = Texto normal
                 let colorClase = 'text-gray-700';
                 let icon = '•';
                 if (item.color === 'red') { colorClase = 'text-red-600 font-bold'; icon = '⚠️'; }
@@ -1922,7 +1359,29 @@ function generarResumenMedicoLocal(persona, resultadosEvaluados) {
             html += `</ul></div>`;
         }
     }
-    html += `</div>`; // Cierra el Grid
+    html += `</div>`; 
 
     return html;
+}
+
+async function sincronizarBaseManual() {
+    Swal.fire({
+        title: 'Sincronizando...',
+        text: 'Descargando datos actualizados desde Google Sheets. Aguarde por favor...',
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading()
+    });
+
+    try {
+        const response = await fetch('/api/admin/sincronizar', { method: 'POST' });
+        const data = await response.json();
+
+        if (response.ok) {
+            Swal.fire('¡Base Actualizada!', `Se han sincronizado ${data.totalRegistros} pacientes en la memoria ultrarrápida.`, 'success');
+        } else {
+            throw new Error(data.error || 'Error al sincronizar');
+        }
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    }
 }
