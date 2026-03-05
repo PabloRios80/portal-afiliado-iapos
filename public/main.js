@@ -384,8 +384,8 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     const v = String(value || '').toLowerCase().trim();
     const k = key.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
     
-    const noRealizado = v.includes('no se realiza') || v.includes('no realizado') || v === 'no' || 
-                        v.includes('no corresponde') || v === '' || v.includes('no indicado') || 
+    const noRealizado = v.includes('no se realiza') || v.includes('no realiza') || v.includes('no realizado') || v === 'no' || 
+                        v.includes('no corresponde') || v === '' || v.includes('no indicado') || v.includes('no cumple') ||
                         v.includes('no aplica') || v.includes('pendiente');
 
     if (k === 'EDAD' || k === 'SEXO') {
@@ -466,6 +466,7 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     if (k.includes('VIOLENCIA')) {
         if (v.includes('no se verifica') || v.includes('no presenta') || v === 'no') return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'No se detectan indicadores de riesgo.' };
         if (v.includes('se verifica') || v.includes('si') || v.includes('detectada')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Situación de riesgo. IAPOS cuenta con equipos de contención.' };
+        if (v.includes('No se realiza')) return { color: 'grey', icon: 'exclamation', text: 'Pendiente',};
     }
 
     if (k.includes('DEPRESION')) {
@@ -584,7 +585,7 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     }
 
     if (k.includes('ALIMENTACION') || k.includes('NUTRICION')) {
-        if (v === 'no' || v.includes('mala')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Mejorar hábitos.' };
+        if (v === 'no' || v.includes('mala')) return { color: 'yellow', icon: 'exclamation', text: 'Alerta', customMsg: 'Mejorar hábitos.' };
         if (v === 'si' || v.includes('buena')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: '¡Muy bien!' };
     }
 
@@ -598,10 +599,28 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     }
 
     if (v === 'no' || v === 'No' || v.includes('presenta') || v.includes('elevado') || v.includes('anormal') || 
-        v.includes('alto') || v.includes('no control') || v.includes('no realiza') || v.includes('pendiente') || 
+        v.includes('alto') || v.includes('no control') || v.includes('pendiente') || 
         v.includes('riesgo alto') || v.includes('positivo') || v.includes('incompleto') || 
         v.includes('obesidad') || v.includes('hipertensión') || v.includes('patologic')) {
         return { color: 'red', icon: 'times', text: 'Alerta' };
+    }
+// --- ACTIVIDAD FÍSICA (Nueva regla forzada a Amarillo) ---
+    if (k.includes('ACTIVIDAD') || k.includes('FISICA') || k.includes('EJERCICIO')) {
+        if ( v.includes('no realiza')) {
+            return { color: 'yellow', icon: 'times', text: 'Precaucion' };
+        }
+        if (v.includes('Si realiza') || v.includes('adecuada') || v.includes('realiza') || v.includes('buena')) {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Buena actividad física.' };
+        }
+    }
+    // --- SEGURIDAD VIAL (Ajustado para que sea Amarillo) ---
+    if (k.includes('SEGURIDAD') && k.includes('VIAL')) {
+        if (v.includes('no cumple') || v.includes('no')) {
+            return { color: 'yellow', icon: 'exclamation', text: 'Atención', customMsg: 'Revisar medidas de seguridad.' };
+        }
+        if (v.includes('cumple') || v === 'si') {
+            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Cumple con las normas de seguridad.' };
+        }
     }
 
     if (k.includes('IMC') && (v.includes('sobrepeso') || v.includes('bajo peso'))) return { color: 'yellow', icon: 'exclamation', text: 'Atención' };
@@ -610,7 +629,7 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     if (v === 'si' || v.includes('normal')) return { color: 'green', icon: 'check', text: 'Bien' };
     if (v === 'no' || v.includes('anormal')) return { color: 'red', icon: 'times', text: 'Alerta' };
 
-    return { color: 'gray', icon: 'question', text: 'Sin Dato' };
+    return { color: 'gray', icon: 'question', text: 'Pendiente' };
 }
 
 function mostrarPestana(tabId) {
