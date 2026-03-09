@@ -480,7 +480,7 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
     }
 
     if (k.includes('SEGURIDAD') && k.includes('VIAL')) {
-        if (v.includes('no cumple')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo alto. Use cinturón/casco y respete las normas.' };
+        if (v.includes('no cumple')) return { color: 'yellow', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo alto. Use cinturón/casco y respete las normas.' };
         if (v.includes('cumple')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Cumple con las normas de seguridad.' };
     }
 
@@ -611,15 +611,6 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         }
         if (v.includes('Si realiza') || v.includes('adecuada') || v.includes('realiza') || v.includes('buena')) {
             return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Buena actividad física.' };
-        }
-    }
-    // --- SEGURIDAD VIAL (Ajustado para que sea Amarillo) ---
-    if (k.includes('SEGURIDAD') && k.includes('VIAL')) {
-        if (v.includes('no cumple') || v.includes('no')) {
-            return { color: 'yellow', icon: 'exclamation', text: 'Atención', customMsg: 'Revisar medidas de seguridad.' };
-        }
-        if (v.includes('cumple') || v === 'si') {
-            return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Cumple con las normas de seguridad.' };
         }
     }
 
