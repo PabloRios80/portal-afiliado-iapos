@@ -196,7 +196,7 @@ async function iniciarPortal(dniParaBuscar) {
         Swal.close(); // El usuario ya puede operar
 
         // 5. BUSCAMOS LOS PDFs UNO POR UNO (Los 404 son normales aquí)
-        const estudiosList = ['laboratorio', 'mamografia', 'ecografia', 'ecomamaria', 'espirometria', 'enfermeria', 'densitometria', 'vcc', 'oftalmologia', 'odontologia', 'biopsia'];
+        const estudiosList = ['laboratorio', 'mamografia', 'ecografia', 'ecomamaria', 'espirometria', 'enfermeria', 'densitometria', 'vcc', 'oftalmologia', 'odontologia', 'biopsia', 'papanicolau'];
         
         estudiosList.forEach(tipo => {
             obtenerLinkEstudios(dniToSearch, tipo).then(res => {
@@ -272,6 +272,7 @@ function cargarEstudiosTab(estudiosResults) {
     
     const estudiosMaestros = [
         { nombre: 'Laboratorio Bioquímico', icon: 'fas fa-flask', key: 'laboratorio' },
+        { nombre: 'Papanicolau', icon: 'fas fa-vial', key: 'papanicolau', soloMujeres: true },
         { nombre: 'Mamografía', icon: 'fas fa-x-ray', key: 'mamografia', soloMujeres: true },
         { nombre: 'Ecografía', icon: 'fas fa-ultrasound', key: 'ecografia' },
         { nombre: 'Espirometría', icon: 'fas fa-lungs', key: 'espirometria' },
