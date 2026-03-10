@@ -30,11 +30,54 @@ function mostrarLogin() {
     document.getElementById('form-login').classList.remove('hidden');
     document.getElementById('form-registro').classList.add('hidden');
 }
+// ==============================================================================
+// GESTIÓN DE UI LOGIN / REGISTRO (CON DISEÑO MEJORADO PARA CORREO)
+// ==============================================================================
 
 function mostrarRegistro() {
-    document.getElementById('auth-modal').classList.remove('hidden');
-    document.getElementById('form-login').classList.add('hidden');
-    document.getElementById('form-registro').classList.remove('hidden');
+    cerrarAuthModal(); // Por si venían desde el cuadro de login, lo cerramos
+    
+    Swal.fire({
+        title: 'Solicitar Clave de Acceso',
+        html: `
+            <div class="text-left text-gray-700">
+                <p class="mb-4 text-sm leading-relaxed">
+                    Para proteger tu privacidad y garantizar la <b>exactitud clínica</b> de tus resultados, nuestro equipo médico revisa cada informe antes de entregarlo.
+                </p>
+                <p class="font-bold mb-4 text-gray-900">
+                    Solicita tu clave indicándonos tu DNI por cualquiera de estos medios:
+                </p>
+                
+                <div class="flex flex-col space-y-4">
+                    <a href="https://wa.me/5493424071702?text=Hola,%20soy%20el%20DNI%20[%20Escribe%20tu%20DNI%20aquí%20]%20y%20solicito%20mi%20clave%20de%20acceso%20a%20mi%20portal%20personal." 
+                        target="_blank" 
+                        class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center transition shadow-md">
+                        <i class="fab fa-whatsapp text-2xl mr-3"></i> Pedir por WhatsApp
+                    </a>
+                    
+                    <div class="bg-blue-50 p-4 rounded-lg border border-blue-200 shadow-sm">
+                        <p class="text-sm font-bold text-blue-900 mb-2"><i class="fas fa-envelope mr-2"></i> Pedir por Correo Electrónico</p>
+                        <p class="text-xs text-gray-700 mb-3">Envía un mail con el asunto <b>"Solicito clave de acceso a mi portal personal"</b> a esta dirección:</p>
+                        
+                        <div class="bg-white p-3 rounded border border-gray-300 text-center mb-3">
+                            <span class="font-mono text-sm md:text-base text-blue-800 font-bold select-all">diapreventivoiapos@diapreventivo.com</span>
+                        </div>
+                        
+                        <a href="mailto:diapreventivoiapos@diapreventivo.com?subject=Solicito%20clave%20de%20acceso%20a%20mi%20portal%20personal&body=Hola,%20soy%20el%20DNI%20[%20Escribe%20tu%20DNI%20aquí%20]%20y%20solicito%20mi%20clave%20para%20ingresar%20al%20portal." 
+                            class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded block text-center text-sm transition">
+                            <i class="fas fa-external-link-alt mr-1"></i> Abrir mi app de correos
+                        </a>
+                    </div>
+                </div>
+            </div>
+        `,
+        showConfirmButton: false,
+        showCloseButton: true,
+        width: '550px',
+        customClass: {
+            popup: 'rounded-xl border-t-4 border-blue-600'
+        }
+    });
 }
 
 function cerrarAuthModal() {
