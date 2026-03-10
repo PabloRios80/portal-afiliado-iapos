@@ -1270,7 +1270,7 @@ async function crearUsuarioRapido() {
             }
 
             const saludo = nombrePaciente ? `Hola *${nombrePaciente}*! 👋` : `Hola! 👋`;
-            const mensaje = `${saludo} Desde el Programa Día Preventivo IAPOS te enviamos tus credenciales de acceso para que puedas acceder a tu Portal Personal de Salud donde encontrarás los resultados de tus estudios y las recomendaciones de tu equipo de salud! Gracias por hacerte el Día Preventivo y te esperamos pronto.\n\n🆔 *Usuario (DNI):* ${data.dni}\n🔒 *Clave Provisoria:* ${data.password}\n\nIngresa ahora para ver tus estudios: https://portal-afiliado-iapos.onrender.com/`;
+            const mensaje = `${saludo} Desde el Programa Día Preventivo IAPOS te enviamos tus credenciales de acceso para que puedas acceder a tu Portal Personal de Salud donde encontrarás los resultados de tus estudios y las recomendaciones de tu equipo de salud! Gracias por hacerte el Día Preventivo y te esperamos pronto.\n\n🆔 *Usuario (DNI):* ${data.dni}\n🔒 *Clave Provisoria:* ${data.password}\n\nIngresa ahora para ver tus estudios: https://diapreventivoiapos.com/`;
             
             const linkWhatsapp = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
             document.getElementById('btn-whatsapp-share').href = linkWhatsapp;
