@@ -452,13 +452,32 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
             return { color: 'gray', icon: 'info', text: 'No Requerido', customMsg: 'Paciente no fumador. La espirometría no es estrictamente necesaria.' };
         }
     }
-
     if (k.includes('ANEURISMA') || k.includes('AORTA')) {
-        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Aorta abdominal sin alteraciones.' };
-        else if (v.includes('se verifica') || v.includes('detectad') || v.includes('positivo')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
-        else if (noRealizado) {
-            if (edad >= 65) return { color: 'yellow', icon: 'exclamation', text: 'Pendiente', customMsg: 'Ecografía de aorta recomendada por edad.' };
-            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Estudio no indicado para su rango de edad (menor a 65).' };
+        // 1. Averiguamos si el paciente es fumador buscando en toda su historia clínica
+        const claveTabaco = Object.keys(allData).find(x => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().includes('TABACO') || x.toUpperCase().includes('FUMA'));
+        const valorTabaco = claveTabaco ? String(allData[claveTabaco]).toLowerCase().trim() : '';
+        const noFuma = valorTabaco.includes('no fuma') || valorTabaco.includes('nunca') || valorTabaco.includes('ex') || valorTabaco === 'no';
+        const esFumador = (valorTabaco.includes('fuma') && !noFuma) || valorTabaco === 'si' || valorTabaco.includes('fumador');
+
+        // 2. Si ya se hizo el estudio y tiene patología
+        if (v.includes('se verifica') || v.includes('detectad') || v.includes('positivo') || v.includes('presente') || v === 'si') {
+            return { color: 'red', icon: 'exclamation', text: 'Alerta Médica', customMsg: 'Patología detectada. Requiere derivación urgente a especialista.' };
+        }
+        
+        // 3. Si ya se hizo el estudio y está todo perfecto
+        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) {
+            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Aorta abdominal sin alteraciones.' };
+        }
+
+        // 4. Si NO se lo hizo (o está pendiente) aplicamos tu nueva regla de oro cruzada
+        if (noRealizado) {
+            if (edad >= 65 && esFumador) {
+                // Cumple ambas condiciones: Mayor de 65 Y Fumador
+                return { color: 'red', icon: 'exclamation', text: 'Estudio Obligatorio', customMsg: 'ALERTA: Por su edad y antecedente de tabaquismo, esta ecografía está formalmente indicada y debe realizarse.' };
+            } else {
+                // No cumple alguna de las dos (es menor, o no fuma)
+                return { color: 'green', icon: 'check', text: 'No Requerido', customMsg: 'Se indica solamente en mayores de 65 años que sean fumadores.' };
+            }
         }
     }
 
@@ -532,14 +551,6 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         if (v.includes('alto') || v.includes('muy alto')) return { color: 'red', icon: 'exclamation', text: 'Alerta', customMsg: 'Riesgo Cardiovascular ALTO. Seguimiento estricto necesario.' };
         if (v.includes('medio') || v.includes('moderado')) return { color: 'yellow', icon: 'exclamation', text: 'Precaución', customMsg: 'Riesgo Moderado. Se sugieren controles periódicos.' };
         if (v.includes('bajo')) return { color: 'green', icon: 'check', text: 'Calma', customMsg: 'Riesgo Bajo. ¡Sigue cuidándote así!' };
-    }
-
-    if (k.includes('ANEURISMA') || k.includes('AORTA')) {
-        if (v.includes('se verifica') || v.includes('detectado') || v.includes('presente') || v === 'si') return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Patología detectada. Requiere derivación urgente.' };
-        if (noRealizado) {
-            if (sexo === 'masculino' && edad >= 75) return { color: 'red', icon: 'exclamation', text: 'Atención', customMsg: 'Indicado en varones mayores de 75.' };
-            return { color: 'gray', icon: 'info', text: 'No Corresponde', customMsg: 'Indicado solo en varones mayores de 75 años.' };
-        }
     }
 
     if (k.includes('EPOC') || k.includes('ESPIROMETRIA')) {

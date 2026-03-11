@@ -21,7 +21,8 @@ function traducirMensajeParaPaciente(item) {
         if (ind.includes('PROSTATA') || ind.includes('PSA')) return "Tienes pendiente el control prostático. A partir de los 50 años, este chequeo preventivo es indispensable.";
         if (ind.includes('ESPIROMETRIA') || ind.includes('EPOC')) return "Al registrar hábitos de tabaquismo, tienes pendiente realizarte una espirometría. Es clave para conocer la salud de tus pulmones.";
         if (ind.includes('VACUNA') || ind.includes('INMUNIZACION')) return "Figura pendiente la actualización de tu carnet de vacunación. Recuerda que las vacunas son tu primer escudo de defensa.";
-        
+        // 👇 AGREGA ESTA LÍNEA NUEVA AQUÍ 👇
+        if (ind.includes('ANEURISMA') || ind.includes('AORTA')) return msgOriginal; // Deja pasar el texto exacto que armamos en main.js
         return `Tienes este chequeo pendiente: ${item.indicador}. Mantener tus controles al día es vital para prevenir problemas a futuro.`;
     }
 
