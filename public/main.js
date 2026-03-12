@@ -1500,3 +1500,66 @@ async function sincronizarBaseManual() {
         Swal.fire('Error', error.message, 'error');
     }
 }
+// ==============================================================================
+// VENTANA INFORMATIVA: ¿QUÉ ES EL DÍA PREVENTIVO?
+// ==============================================================================
+function mostrarInfoDiaPreventivo() {
+    Swal.fire({
+        title: '<span class="text-2xl font-bold text-blue-800">Día Preventivo de la Salud</span>',
+        html: `
+            <div class="text-left text-gray-700 text-sm overflow-y-auto max-h-[70vh] p-2">
+                <div class="bg-blue-50 border-l-4 border-blue-600 p-3 mb-4 rounded shadow-sm">
+                    <p class="font-bold text-blue-900 text-base">Control Anual Gratuito para afiliados/as al IAPOS sin entregar coseguros.</p>
+                </div>
+
+                <h3 class="font-bold text-lg text-gray-800 border-b pb-1 mb-3"><i class="fas fa-stethoscope text-blue-600 mr-2"></i> ¿Qué vamos a controlar?</h3>
+                <p class="text-xs text-gray-500 mb-2 italic">Según tu edad, sexo y antecedentes:</p>
+                <ul class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-5 list-disc pl-5">
+                    <li>Tu presión arterial</li>
+                    <li>Tu índice de masa corporal (IMC)</li>
+                    <li>Tu agudeza visual</li>
+                    <li>Tu estado de salud bucal</li>
+                    <li>Tu riesgo cardiovascular</li>
+                    <li>Control del niño en edad escolar</li>
+                    <li>Esquema vacunatorio completo</li>
+                </ul>
+
+                <h3 class="font-bold text-lg text-gray-800 border-b pb-1 mb-3"><i class="fas fa-microscope text-blue-600 mr-2"></i> Haremos rastreos con estudios sencillos</h3>
+                <ul class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-5 list-disc pl-5">
+                    <li>Diabetes y Dislipemia (colesterol)</li>
+                    <li>Cáncer de mama y cérvico uterino</li>
+                    <li>Cáncer colorrectal y de próstata</li>
+                    <li>Infecciones de transmisión sexual (HIV, Sífilis, Hepatitis)</li>
+                    <li>Enfermedad renal crónica y EPOC</li>
+                    <li>Osteoporosis y Aneurisma de aorta</li>
+                    <li>Control de caídas en adultos</li>
+                    <li>Consumo de alcohol, tabaco, violencia y depresión</li>
+                </ul>
+
+                <h3 class="font-bold text-lg text-gray-800 border-b pb-1 mb-3"><i class="fas fa-apple-alt text-blue-600 mr-2"></i> Recibirás consejería médica sobre:</h3>
+                <div class="flex flex-wrap gap-2 mb-5">
+                    <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold">Alimentación saludable</span>
+                    <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold">Actividad física</span>
+                    <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold">Seguridad vial</span>
+                    <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold">Ácido fólico</span>
+                </div>
+
+                <div class="bg-gray-100 p-4 rounded-lg mt-2 text-center border border-gray-200">
+                    <h4 class="font-bold text-gray-800 mb-2 text-lg">¡SACÁ TU TURNO!</h4>
+                    <p class="mb-1"><i class="fab fa-whatsapp text-green-600 text-lg mr-1"></i> <b>+54 9 342 407-1702</b></p>
+                    <p class="mb-2"><i class="fas fa-envelope text-gray-500 mr-1"></i> espacioprestacionaliapos@gmail.com</p>
+                    <p class="text-xs text-gray-600 border-t pt-2 mt-2">
+                        📍 <b>Santa Fe:</b> San Martín 3145<br>
+                        📍 <b>Rosario:</b> Entre Ríos 2867 - Consultorio "A"
+                    </p>
+                </div>
+            </div>
+        `,
+        width: '650px',
+        showCloseButton: true,
+        showConfirmButton: false,
+        customClass: {
+            popup: 'rounded-xl border-t-4 border-blue-600'
+        }
+    });
+}
