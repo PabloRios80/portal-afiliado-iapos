@@ -453,31 +453,39 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         }
     }
     if (k.includes('ANEURISMA') || k.includes('AORTA')) {
-        // 1. Averiguamos si el paciente es fumador buscando en toda su historia clínica
+        // 1. Averiguamos si el paciente es fumador
         const claveTabaco = Object.keys(allData).find(x => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().includes('TABACO') || x.toUpperCase().includes('FUMA'));
         const valorTabaco = claveTabaco ? String(allData[claveTabaco]).toLowerCase().trim() : '';
         const noFuma = valorTabaco.includes('no fuma') || valorTabaco.includes('nunca') || valorTabaco.includes('ex') || valorTabaco === 'no';
         const esFumador = (valorTabaco.includes('fuma') && !noFuma) || valorTabaco === 'si' || valorTabaco.includes('fumador');
 
-        // 2. Si ya se hizo el estudio y tiene patología
-        if (v.includes('se verifica') || v.includes('detectad') || v.includes('positivo') || v.includes('presente') || v === 'si') {
+        // 2. Arreglamos el error de palabras cruzadas ("no se verifica" vs "se verifica")
+        const esNormal = v.includes('no se verifica') || v.includes('normal') || v.includes('negativo');
+        const esPatologico = (v.includes('se verifica') && !v.includes('no se verifica')) || v.includes('detectad') || v.includes('positivo') || v.includes('presente') || v === 'si';
+        
+        // 3. ATAMOS EL ERROR DEL MÉDICO
+        const forzarNoRealizado = noRealizado || (v.includes('no se verifica') && (edad < 65 || !esFumador));
+
+        // 4. Repartimos las tarjetas
+        if (esPatologico) {
             return { color: 'red', icon: 'exclamation', text: 'Alerta Médica', customMsg: 'Patología detectada. Requiere derivación urgente a especialista.' };
         }
-        
-        // 3. Si ya se hizo el estudio y está todo perfecto
-        if (v.includes('no se verifica') || v.includes('normal') || v.includes('negativo')) {
-            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Aorta abdominal sin alteraciones.' };
-        }
 
-        // 4. Si NO se lo hizo (o está pendiente) aplicamos tu nueva regla de oro cruzada
-        if (noRealizado) {
+        if (forzarNoRealizado) {
             if (edad >= 65 && esFumador) {
-                // Cumple ambas condiciones: Mayor de 65 Y Fumador
                 return { color: 'red', icon: 'exclamation', text: 'Estudio Obligatorio', customMsg: 'ALERTA: Por su edad y antecedente de tabaquismo, esta ecografía está formalmente indicada y debe realizarse.' };
             } else {
-                // No cumple alguna de las dos (es menor, o no fuma)
                 return { color: 'green', icon: 'check', text: 'No Requerido', customMsg: 'Se indica solamente en mayores de 65 años que sean fumadores.' };
             }
+        }
+
+        if (esNormal) {
+            // ¡NUEVA REGLA QUE PEDISTE!
+            if (edad >= 65 && esFumador) {
+                return { color: 'yellow', icon: 'exclamation', text: 'Normal - Precaución', customMsg: 'Sin signos de aneurisma, pero por su edad y tabaquismo el riesgo persiste. ¡Considere dejar de fumar a la brevedad!' };
+            }
+            // Si es normal y no cumple el riesgo anterior:
+            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Aorta abdominal sin alteraciones.' };
         }
     }
 
