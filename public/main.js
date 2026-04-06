@@ -565,9 +565,24 @@ function getRiskLevel(key, value, edad, sexo, allData = {}) {
         if (v.includes('se verifica') || v.includes('detectado') || v.includes('obstruccion') || v === 'si') return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Signos de EPOC detectados. Requiere tratamiento.' };
         if (noRealizado) return { color: 'gray', icon: 'info', text: 'Condicional', customMsg: 'Este estudio se realiza solo en fumadores.' };
     }
+    if (k.includes('ERC') || k.includes('RENAL') || k.includes('RINON')) {
+        // Le quitamos los acentos al valor escrito por el médico para que "patológico" y "patologico" sean lo mismo para el sistema
+        const vSinAcentos = v.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-    if (k.includes('ERC') || k.includes('RENAL') || k.includes('RIÑON')) {
-        if (v.includes('patologic') || v.includes('anormal') || v.includes('alterad') || v.includes('estadio')) return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Función renal alterada. Consulte a su médico.' };
+        // 1. Si hay patología (Alerta Roja)
+        if (vSinAcentos.includes('patologic') || vSinAcentos.includes('anormal') || vSinAcentos.includes('alterad') || vSinAcentos.includes('estadio')) {
+            return { color: 'red', icon: 'times', text: 'Alerta', customMsg: 'Función renal alterada. Consulte a su médico.' };
+        }
+        
+        // 2. Si está todo bien (Calma Verde)
+        if (vSinAcentos.includes('normal') || vSinAcentos.includes('negativo') || vSinAcentos.includes('conservad') || vSinAcentos.includes('no se verifica')) {
+            return { color: 'green', icon: 'check', text: 'Normal', customMsg: 'Función renal conservada.' };
+        }
+
+        // 3. Si no se hizo el estudio o está pendiente
+        if (noRealizado) {
+            return { color: 'gray', icon: 'info', text: 'No Registrado', customMsg: 'No se registran datos de función renal.' };
+        }
     }
 
     if (k.includes('AGUDEZA') || k.includes('VISUAL')) {
