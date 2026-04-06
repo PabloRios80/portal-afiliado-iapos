@@ -1273,7 +1273,30 @@ if (btnCerrarBusqueda) {
         document.getElementById('search-container').style.display = 'none';
     });
 }
+// ==============================================================================
+// FUNCIÓN PARA COPIAR CREDENCIALES AL PORTAPAPELES (PARA ENVÍO POR MAIL)
+// ==============================================================================
+window.copiarAlPortapapeles = function(texto) {
+    // Le quitamos los asteriscos (*) que usa WhatsApp para las negritas
+    const textoLimpio = texto.replace(/\*/g, '');
 
+    navigator.clipboard.writeText(textoLimpio).then(() => {
+        Swal.fire({
+            icon: 'success',
+            title: '¡Copiado!',
+            text: 'El mensaje está listo. Ve a tu correo y presiona Pegar (Ctrl+V).',
+            timer: 2500,
+            showConfirmButton: false
+        });
+    }).catch(err => {
+        console.error('Error al copiar: ', err);
+        Swal.fire('Error', 'No se pudo copiar el texto automáticamente.', 'error');
+    });
+};
+
+// ==============================================================================
+// CREACIÓN DE USUARIO RÁPIDO
+// ==============================================================================
 async function crearUsuarioRapido() {
     const dniInput = document.getElementById('admin-dni-input');
     const dni = dniInput.value.trim();
@@ -1306,8 +1329,15 @@ async function crearUsuarioRapido() {
             const saludo = nombrePaciente ? `Hola *${nombrePaciente}*! 👋` : `Hola! 👋`;
             const mensaje = `${saludo} Desde el Programa Día Preventivo IAPOS te enviamos tus credenciales de acceso para que puedas acceder a tu Portal Personal de Salud donde encontrarás los resultados de tus estudios y las recomendaciones de tu equipo de salud! Gracias por hacerte el Día Preventivo y te esperamos pronto.\n\n🆔 *Usuario (DNI):* ${data.dni}\n🔒 *Clave Provisoria:* ${data.password}\n\nIngresa ahora para ver tus estudios: https://diapreventivoiapos.com/`;
             
+            // 1. Conectamos el botón de WhatsApp
             const linkWhatsapp = `https://wa.me/?text=${encodeURIComponent(mensaje)}`;
             document.getElementById('btn-whatsapp-share').href = linkWhatsapp;
+
+            // 2. Conectamos el nuevo botón de Mail (Copiado)
+            const btnMail = document.getElementById('btn-mail-share');
+            if (btnMail) {
+                btnMail.onclick = () => copiarAlPortapapeles(mensaje);
+            }
 
             Swal.fire({
                 toast: true, position: 'top-end', icon: 'success', 
@@ -1586,3 +1616,26 @@ function mostrarInfoDiaPreventivo() {
         }
     });
 }
+
+// ==============================================================================
+// FUNCIÓN PARA COPIAR CREDENCIALES AL PORTAPAPELES (PARA ENVÍO POR MAIL)
+// ==============================================================================
+window.copiarAlPortapapeles = function(texto) {
+    // Le quitamos los asteriscos (*) que usa WhatsApp para las negritas, 
+    // así el texto queda más limpio para un correo normal.
+    const textoLimpio = texto.replace(/\*/g, '');
+
+    navigator.clipboard.writeText(textoLimpio).then(() => {
+        // Usamos la misma librería de alertas que ya tienes para avisar que se copió
+        Swal.fire({
+            icon: 'success',
+            title: '¡Copiado!',
+            text: 'El mensaje ya está listo. Ve a tu correo y presiona Pegar (Ctrl+V).',
+            timer: 2500,
+            showConfirmButton: false
+        });
+    }).catch(err => {
+        console.error('Error al copiar: ', err);
+        Swal.fire('Error', 'No se pudo copiar el texto automáticamente.', 'error');
+    });
+};
